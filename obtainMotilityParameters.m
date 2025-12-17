@@ -308,7 +308,7 @@ while(retryBool)
     fftRPowerPeakMin=min(fftRootPowerGMV(:,actualMaxPosition));
     fftRPowerPeakMax=max(fftRootPowerGMV(:,actualMaxPosition));
     
-    fitInfo = sprintf('\nWave Period (s) = %.2f \nWave Period  from FFT (s) = %.2f \nSlope (s/marker) = %.2f \n Wave Fit R-Squared = %.4f \n Wave Speed Variation = %.2f \n FFT Peak Amplitude (um/sec) = %.2f',...
+    fitInfo = sprintf('\nWave Period (s) = %.2f \nWave Period  from FFT (s) = %.2f \nSlope (s/marker) = %.2f \n Wave Fit R-Squared = %.4f \n Wave Speed Variation = %.2f \n FFT Peak Amplitude (um/sec) = %.3f',...
         60/waveFrequency, 1/fftPeakFreq, BByFPS, waveFitRSquared, sigB, convertAmplitudeToUmUnits*fftPowerPeak);
     retryPrompt = menu(strcat('Does everything look good (figures will be saved after this)?',fitInfo),'Yes','No');
     if(retryPrompt==1)
