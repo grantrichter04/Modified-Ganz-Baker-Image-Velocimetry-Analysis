@@ -1,0 +1,570 @@
+% createPIVMovie.m (ENHANCED VERSION - COLOR FIELD OVERLAY)
+% 
+% Drop-in replacement with color field visualization:
+%   - Smooth color overlay encoding velocity direction and magnitude
+%   - Orange = forward (anterograde), Blue = backward (retrograde)
+%   - Color intensity proportional to velocity magnitude
+%   - Optional sparse arrows on top for reference
+%   - Synchronized kymograph panel
+%
+% Original by Ryan Baker
+% Enhanced January 2026
+
+function createPIVMovie(curAnDir, curExpDir, analysisVariables, PIVVideoParams, PIVOutputName, interpolationOutputName)
+
+%% ========== CONFIGURABLE PARAMETERS ==========
+
+% Color field settings
+forwardColor = [1.0 0.5 0.1];     % Orange for forward motion
+backwardColor = [0.1 0.5 1.0];    % Blue for backward motion  
+colorFieldAlpha = 0.55;           % Base transparency of color overlay (0-1)
+maxVelocityForColor = 0;          % Max velocity for color scaling (0 = auto)
+
+% Optional sparse arrows on top of color field
+showArrows = true;                % Set false for color-only view
+arrowSpacing = 3;                 % Show every Nth arrow
+arrowColor = [1 1 1];             % White arrows stand out on color field
+arrowLineWidth = 1.5;
+velMultiple = 20;
+
+% Mesh grid overlay (shows the curvilinear coordinate system)
+showMeshGrid = true;              % Overlay the gut mesh grid structure
+meshGridColor = [0.3 1.0 0.3];   % Bright green to stand out
+meshGridAlpha = 0.3;              % Transparency (0=invisible, 1=opaque) - ADJUST THIS
+meshGridLineWidth = 1.0;          % Line thickness
+meshGridSpacing = 1;              % Show every Nth grid line (1 = all lines)
+
+% Annotations
+showTimestamp = true;
+showScaleBar = true;
+showColorLegend = true;           % Color bar legend for velocity
+showKymograph = true;
+
+% Video settings
+do_histEq = false;
+scaleBarMicrons = 0;              % 0 = auto-calculate
+
+%% ========== LOAD DATA AND SETUP ==========
+
+suffix = analysisVariables{1};
+fps = str2double(analysisVariables{3});
+origMicronsPerPixel = str2double(analysisVariables{4});
+origResReduction = str2double(analysisVariables{5});
+
+startTP = PIVVideoParams(1,1)/100;
+deltaF = PIVVideoParams(1,2);
+endTP = PIVVideoParams(1,3)/100;
+startX = PIVVideoParams(2,1)/100;
+resReduceNew = PIVVideoParams(2,2);
+endX = PIVVideoParams(2,3)/100;
+resReduce = resReduceNew * origResReduction;
+micronsPerPixel = origMicronsPerPixel * resReduce;
+
+load(fullfile(curAnDir, [interpolationOutputName '_Current.mat']), ...
+    'gutMesh', 'gutMeshVels', 'gutMeshVelsPCoords', 'thetas');
+
+% Load the user-drawn gut mask
+maskFileName = 'maskVars_Current.mat';  % Default mask filename
+if exist(fullfile(curAnDir, maskFileName), 'file')
+    maskData = load(fullfile(curAnDir, maskFileName), 'gutOutlinePoly');
+    gutOutlinePoly = maskData.gutOutlinePoly;
+    hasUserMask = true;
+    fprintf('  Loaded user-drawn gut mask\n');
+else
+    hasUserMask = false;
+    warning('Gut mask file not found - will estimate mask from mesh coordinates');
+end
+
+%% ========== BUILD FILENAME LIST ==========
+
+direc = dir(fullfile(curExpDir, suffix)); 
+baseFilenames = {};
+[baseFilenames{1:length(direc),1}] = deal(direc.name);
+baseFilenames = sortrows(baseFilenames);
+amount = length(baseFilenames);
+count = 1;
+filenames = {};
+
+progbar1 = waitbar(0, 'Obtaining image information...');
+
+if strcmp(suffix, '*.tif')
+    for i = 1:amount
+        waitbar(i/amount, progbar1);
+        info = imfinfo(fullfile(curExpDir, baseFilenames{i}));
+        nI = size(info, 1);
+        for j = 1:nI
+            filenames{count}.name = info.Filename;
+            filenames{count}.index = j;
+            count = count + 1;
+        end
+    end
+else
+    for i = 1:amount
+        filenames{i}.name = baseFilenames{i};
+        filenames{i}.index = 1;
+    end
+end
+close(progbar1);
+
+%% ========== VIDEO PROPERTIES ==========
+
+nF = size(filenames, 2);
+info = imfinfo(fullfile(curExpDir, baseFilenames{1}));
+numRows = info(1).Height;
+numCols = info(1).Width;
+
+startingFrame = round(nF * startTP + 1);
+endingFrame = round(nF * endTP);
+startingPosition = round(numCols * startX + 1);
+endingPosition = round(numCols * endX);
+
+dispRows = floor(numRows / resReduce);
+dispCols = floor((endingPosition - startingPosition + 1) / resReduce);
+
+%% ========== SCALE BAR ==========
+
+if scaleBarMicrons == 0
+    imageWidthMicrons = dispCols * micronsPerPixel;
+    magnitude = 10^floor(log10(imageWidthMicrons * 0.12));
+    scaleBarMicrons = round(imageWidthMicrons * 0.12 / magnitude) * magnitude;
+    if scaleBarMicrons == 0, scaleBarMicrons = 50; end
+end
+scaleBarPixels = scaleBarMicrons / micronsPerPixel;
+
+%% ========== DETERMINE VELOCITY RANGE FOR COLOR SCALING ==========
+
+% Sample a few frames to determine appropriate color scaling
+if maxVelocityForColor == 0
+    sampleFrames = round(linspace(1, size(gutMeshVels, 4), min(20, size(gutMeshVels, 4))));
+    allVels = [];
+    for sf = sampleFrames
+        velFrame = gutMeshVels(:,:,1,sf);
+        allVels = [allVels; velFrame(:)];
+    end
+    % Use 95th percentile to avoid outliers dominating the scale
+    maxVelocityForColor = prctile(abs(allVels), 95);
+    fprintf('  Auto-detected velocity range: Â±%.2f Âµm/s\n', maxVelocityForColor);
+end
+
+%% ========== KYMOGRAPH DATA ==========
+
+if showKymograph
+    qstMap = squeeze(-mean(gutMeshVelsPCoords(:,:,1,:), 1))';
+    scale = origMicronsPerPixel * origResReduction;
+    translateMarkerNumToMicron = scale * round(mean(diff(squeeze(gutMesh(1,:,1,1)))));
+    qstXAxis = (0:size(qstMap,2)-1) * translateMarkerNumToMicron;
+    qstYAxis = (0:size(qstMap,1)-1) / fps;
+    
+    % Check current kymograph color scaling (for your reference)
+    kymographMin = min(qstMap(:));
+    kymographMax = max(qstMap(:));
+    fprintf('  Kymograph velocity range: %.2f to %.2f (currently auto-scaled)\n', ...
+        kymographMin, kymographMax);
+end
+
+%% ========== HISTOGRAM EQ PREP ==========
+
+if do_histEq
+    firstIm = imread(fullfile(filenames{1}.name), 'Index', filenames{1}.index, ...
+        'PixelRegion', {[1 resReduce numRows], [startingPosition resReduce endingPosition]});
+    firstImHistExample = histeq(firstIm);
+    maxI = double(max(firstImHistExample(:)));
+    minI = double(min(firstImHistExample(:)));
+end
+
+%% ========== SETUP VIDEO WRITER ==========
+
+writerObj = VideoWriter(fullfile(curAnDir, PIVOutputName), 'Uncompressed AVI');
+open(writerObj);
+
+%% ========== CREATE FIGURE ==========
+
+if showKymograph
+    figWidth = 1200;
+    figHeight = 500;
+else
+    figWidth = 900;
+    figHeight = 600;
+end
+
+fig = figure('Position', [100 100 figWidth figHeight], ...
+    'Visible', 'on', 'Resize', 'off', ...
+    'MenuBar', 'none', 'ToolBar', 'none');
+set(fig, 'Renderer', 'painters', 'Color', [0.15 0.15 0.15]);
+drawnow;
+
+%% ========== CREATE MAIN AXES ==========
+
+if showKymograph
+    ax_main = axes('Position', [0.01 0.06 0.65 0.92]);
+else
+    ax_main = axes('Position', [0.03 0.05 0.90 0.92]);
+end
+
+% Read first frame
+firstImage = imread(fullfile(filenames{startingFrame}.name), ...
+    'Index', filenames{startingFrame}.index, ...
+    'PixelRegion', {[1 resReduce numRows], [startingPosition resReduce endingPosition]});
+if do_histEq
+    firstImage = (double(imhistmatch(firstImage, firstImHistExample)) - minI) / (maxI - minI);
+else
+    firstImage = double(firstImage);
+end
+
+% Normalize image for display
+firstImageNorm = (firstImage - min(firstImage(:))) / (max(firstImage(:)) - min(firstImage(:)));
+
+% Create RGB version of grayscale image
+firstImageRGB = repmat(firstImageNorm, [1 1 3]);
+
+% Create image object - will display blended image
+hImg = image(ax_main, firstImageRGB);
+set(ax_main, 'YDir', 'reverse');  % Image coordinates
+axis(ax_main, 'image', 'off');
+hold(ax_main, 'on');
+
+%% ========== PREPARE VELOCITY FIELD INTERPOLATION ==========
+
+% Get mesh coordinates
+qx = gutMesh(:,:,1);
+qy = gutMesh(:,:,2);
+
+% The mesh gives us velocity at discrete points. We need to interpolate
+% to create a smooth field covering the whole image.
+meshXcoords = squeeze(gutMesh(1,:,1));  % X positions (1 x nCols)
+meshYcoords = squeeze(gutMesh(:,1,2));  % Y positions (nRows x 1)
+
+% Create pixel coordinate grids for interpolation
+[pixelX, pixelY] = meshgrid(1:dispCols, 1:dispRows);
+
+%% ========== CREATE GUT MASK FOR COLOR OVERLAY ==========
+
+% Use actual user-drawn mask if available
+if hasUserMask
+    % Create binary mask from user-drawn polygon
+    % gutOutlinePoly is Nx2 array of [x, y] vertices
+    scaledPolyX = gutOutlinePoly(:,1);
+    scaledPolyY = gutOutlinePoly(:,2);
+    
+    % Create binary mask using poly2mask
+    gutMask = poly2mask(scaledPolyX, scaledPolyY, dispRows, dispCols);
+    
+    % Apply slight smoothing to soften edges
+    smoothKernel = fspecial('gaussian', [7 7], 2);
+    gutMask = imfilter(double(gutMask), smoothKernel, 'replicate');
+    fprintf('  Using user-drawn mask for color overlay\n');
+else
+    % Fallback: estimate from mesh coordinates
+    gutTop = min(meshYcoords);
+    gutBottom = max(meshYcoords);
+    gutMask = zeros(dispRows, dispCols);
+    for row = 1:dispRows
+        if row >= gutTop && row <= gutBottom
+            gutMask(row, :) = 1;
+        elseif row < gutTop && row >= gutTop - 20
+            gutMask(row, :) = (row - (gutTop - 20)) / 20;
+        elseif row > gutBottom && row <= gutBottom + 20
+            gutMask(row, :) = ((gutBottom + 20) - row) / 20;
+        end
+    end
+    gutMask = max(0, min(1, gutMask));
+    fprintf('  Using estimated mask (no user mask found)\n');
+end
+
+%% ========== CREATE SPARSE ARROW OBJECTS (if enabled) ==========
+
+if showArrows
+    % Subsample for sparse arrows
+    rowIdx = 1:arrowSpacing:size(qx, 1);
+    colIdx = 1:arrowSpacing:size(qx, 2);
+    [colGrid, rowGrid] = meshgrid(colIdx, rowIdx);
+    sparseIdx = sub2ind(size(qx), rowGrid(:), colGrid(:));
+    
+    qx_sparse = qx(sparseIdx);
+    qy_sparse = qy(sparseIdx);
+    
+    % Initialize quiver (will update data each frame)
+    qu_init = velMultiple * gutMeshVels(:,:,1,1);
+    qu_sparse = qu_init(sparseIdx);
+    
+    hQuiv = quiver(ax_main, qx_sparse, qy_sparse, qu_sparse, zeros(size(qu_sparse)), 0, ...
+        'Color', arrowColor, 'LineWidth', arrowLineWidth, ...
+        'MaxHeadSize', 1.0, 'AutoScale', 'off');
+end
+
+%% ========== MESH GRID OVERLAY (if enabled) ==========
+
+if showMeshGrid
+    % This overlays the actual curvilinear gut mesh structure so viewers can see:
+    % 1. The spatial sampling density (how the gut is discretized)
+    % 2. What region each velocity vector represents
+    % 3. How the coordinate system follows the gut anatomy
+    
+    [nMeshRows, nMeshCols] = size(qx);
+    
+    % Create color with alpha channel for transparency
+    meshColorWithAlpha = [meshGridColor, meshGridAlpha];
+    
+    % Draw longitudinal grid lines (along the gut length)
+    % These connect mesh points in the same row (transverse position) across columns
+    for row = 1:meshGridSpacing:nMeshRows
+        xLine = qx(row, :);
+        yLine = qy(row, :);
+        hLine = line(ax_main, xLine, yLine, ...
+            'Color', meshColorWithAlpha, 'LineWidth', meshGridLineWidth, ...
+            'LineStyle', '-', 'Marker', 'none');
+    end
+    
+    % Draw transverse grid lines (across the gut width)
+    % These connect mesh points in the same column (longitudinal position) across rows
+    for col = 1:meshGridSpacing:nMeshCols
+        xLine = qx(:, col);
+        yLine = qy(:, col);
+        hLine = line(ax_main, xLine, yLine, ...
+            'Color', meshColorWithAlpha, 'LineWidth', meshGridLineWidth, ...
+            'LineStyle', '-', 'Marker', 'none');
+    end
+    
+    % Optional: Add mesh points as small markers at grid intersections
+    % Uncomment the next 3 lines if you want to see dots at each mesh point
+    % plot(ax_main, qx(:), qy(:), '.', ...
+    %     'Color', meshColorWithAlpha, 'MarkerSize', 6);
+    
+    fprintf('  Mesh grid overlay: %d x %d grid (showing every %d lines)\n', ...
+        nMeshRows, nMeshCols, meshGridSpacing);
+end
+
+%% ========== STATIC ANNOTATIONS ==========
+
+% Timestamp (top left)
+if showTimestamp
+    hTime = text(ax_main, 12, 25, 't = 0.00 s', 'Color', 'white', ...
+        'FontSize', 12, 'FontWeight', 'bold', 'BackgroundColor', [0 0 0 0.6], ...
+        'Margin', 3, 'VerticalAlignment', 'top');
+end
+
+% Scale bar (bottom left)
+if showScaleBar
+    barY = dispRows - 20;
+    barX = 20;
+    line(ax_main, [barX barX+scaleBarPixels], [barY barY], 'Color', 'white', 'LineWidth', 4);
+    line(ax_main, [barX barX], [barY-5 barY+5], 'Color', 'white', 'LineWidth', 2);
+    line(ax_main, [barX+scaleBarPixels barX+scaleBarPixels], [barY-5 barY+5], 'Color', 'white', 'LineWidth', 2);
+    text(ax_main, barX + scaleBarPixels/2, barY - 18, sprintf('%d \\mum', scaleBarMicrons), ...
+        'Color', 'white', 'FontSize', 11, 'HorizontalAlignment', 'center', ...
+        'BackgroundColor', [0 0 0 0.5]);
+end
+
+% Color legend (bottom right) - shows what colors mean
+if showColorLegend
+    legX = dispCols - 130;
+    legY = dispRows - 70;
+    legWidth = 100;
+    legHeight = 15;
+    
+    % Create gradient image for legend
+    gradientSteps = 100;
+    legendGradient = zeros(legHeight, legWidth, 3);
+    for gi = 1:legWidth
+        t = (gi - 1) / (legWidth - 1);  % 0 to 1
+        if t < 0.5
+            % Backward (blue) side - interpolate from full blue to gray
+            blend = t * 2;  % 0 to 1 as t goes 0 to 0.5
+            legendGradient(:, gi, 1) = backwardColor(1) * (1-blend) + 0.5 * blend;
+            legendGradient(:, gi, 2) = backwardColor(2) * (1-blend) + 0.5 * blend;
+            legendGradient(:, gi, 3) = backwardColor(3) * (1-blend) + 0.5 * blend;
+        else
+            % Forward (orange) side - interpolate from gray to full orange
+            blend = (t - 0.5) * 2;  % 0 to 1 as t goes 0.5 to 1
+            legendGradient(:, gi, 1) = 0.5 * (1-blend) + forwardColor(1) * blend;
+            legendGradient(:, gi, 2) = 0.5 * (1-blend) + forwardColor(2) * blend;
+            legendGradient(:, gi, 3) = 0.5 * (1-blend) + forwardColor(3) * blend;
+        end
+    end
+    
+    % Draw legend
+    image(ax_main, [legX legX+legWidth], [legY legY+legHeight], legendGradient);
+    
+    % Border
+    rectangle(ax_main, 'Position', [legX, legY, legWidth, legHeight], ...
+        'EdgeColor', 'white', 'LineWidth', 1);
+    
+    % Labels
+    text(ax_main, legX - 5, legY + legHeight/2, 'bwd', ...
+        'Color', backwardColor, 'FontSize', 9, 'FontWeight', 'bold', ...
+        'HorizontalAlignment', 'right', 'VerticalAlignment', 'middle');
+    text(ax_main, legX + legWidth + 5, legY + legHeight/2, 'fwd', ...
+        'Color', forwardColor, 'FontSize', 9, 'FontWeight', 'bold', ...
+        'HorizontalAlignment', 'left', 'VerticalAlignment', 'middle');
+    text(ax_main, legX + legWidth/2, legY - 8, ...
+        sprintf('\\pm%.0f \\mum/s', maxVelocityForColor), ...
+        'Color', 'white', 'FontSize', 9, 'HorizontalAlignment', 'center', ...
+        'BackgroundColor', [0 0 0 0.5]);
+end
+
+hold(ax_main, 'off');
+
+%% ========== KYMOGRAPH PANEL ==========
+
+if showKymograph
+    ax_kymo = axes('Position', [0.70 0.20 0.28 0.72]);
+    
+    % Display kymograph with symmetric color scaling around zero
+    kymographLimit = max(abs(kymographMin), abs(kymographMax));
+    imagesc(ax_kymo, qstXAxis, qstYAxis, qstMap, [-kymographLimit kymographLimit]);
+    
+    colormap(ax_kymo, 'jet');
+    set(ax_kymo, 'YDir', 'normal');
+    hold(ax_kymo, 'on');
+    
+    % Time marker
+    hTimeLine = line(ax_kymo, [qstXAxis(1) qstXAxis(end)], [0 0], ...
+        'Color', 'white', 'LineWidth', 2);
+    hMarkerL = plot(ax_kymo, qstXAxis(1), 0, '<', 'Color', 'white', ...
+        'MarkerSize', 6, 'MarkerFaceColor', 'white');
+    hMarkerR = plot(ax_kymo, qstXAxis(end), 0, '>', 'Color', 'white', ...
+        'MarkerSize', 6, 'MarkerFaceColor', 'white');
+    hold(ax_kymo, 'off');
+    
+    xlabel(ax_kymo, 'Position (\mum)', 'Color', 'white', 'FontSize', 10);
+    ylabel(ax_kymo, 'Time (s)', 'Color', 'white', 'FontSize', 10);
+    title(ax_kymo, 'Kymograph', 'Color', 'white', 'FontSize', 11, 'FontWeight', 'bold');
+    set(ax_kymo, 'XColor', 'white', 'YColor', 'white', 'Color', [0.1 0.1 0.1]);
+    
+    cb = colorbar(ax_kymo, 'Location', 'southoutside');
+    cb.Color = 'white';
+    cb.FontSize = 9;
+    cb.Label.String = 'Velocity (\mum/s)';
+    cb.Label.Color = 'white';
+end
+
+%% ========== GET INITIAL FRAME SIZE ==========
+
+drawnow;
+pause(0.1);
+testFrame = getframe(fig);
+[frameHeight, frameWidth, ~] = size(testFrame.cdata);
+
+%% ========== MAIN FRAME LOOP ==========
+
+totalFrames = length(startingFrame:deltaF:endingFrame-1);
+frameCount = 0;
+progbar2 = waitbar(0, 'Generating PIV animation...');
+
+for i = startingFrame:deltaF:endingFrame-1
+    frameCount = frameCount + 1;
+    
+    if mod(frameCount, 50) == 0
+        waitbar(frameCount/totalFrames, progbar2, ...
+            sprintf('Frame %d of %d', frameCount, totalFrames));
+    end
+    
+    %% Read current image
+    curImage = imread(fullfile(filenames{i}.name), 'Index', filenames{i}.index, ...
+        'PixelRegion', {[1 resReduce numRows], [startingPosition resReduce endingPosition]});
+    if do_histEq
+        curImage = (double(imhistmatch(curImage, firstImHistExample)) - minI) / (maxI - minI);
+    else
+        curImage = double(curImage);
+    end
+    
+    % Normalize to 0-1
+    curImageNorm = (curImage - min(curImage(:))) / (max(curImage(:)) - min(curImage(:)) + eps);
+    
+    %% Get velocity field for this frame
+    curIndex = min(i - (i ~= 1), size(gutMeshVels, 4));
+    rawVelField = gutMeshVels(:,:,1,curIndex);  % Velocity at mesh points
+    
+    %% Interpolate velocity to full image grid
+    % Use the mesh point velocities to create a smooth field
+    % Average across the transverse direction first (rows of mesh)
+    velProfile = mean(rawVelField, 1);  % 1 x nMeshCols
+    
+    % Interpolate along the longitudinal axis to full image width
+    velInterp1D = interp1(meshXcoords, velProfile, 1:dispCols, 'linear', 'extrap');
+    
+    % Replicate to create 2D field (same velocity across height)
+    velField2D = repmat(velInterp1D, dispRows, 1);
+    
+    % gutMask was computed once before the loop - no need to recompute
+    
+    %% Create color overlay based on velocity
+    % Normalize velocity to [-1, 1] range
+    velNorm = velField2D / maxVelocityForColor;
+    velNorm = max(-1, min(1, velNorm));  % Clamp
+    
+    % Create RGB color field
+    colorField = zeros(dispRows, dispCols, 3);
+    
+    % Forward velocities (positive) -> orange
+    fwdMask = velNorm > 0;
+    fwdIntensity = velNorm .* fwdMask;  % 0 to 1 for forward
+    colorField(:,:,1) = colorField(:,:,1) + fwdIntensity * forwardColor(1);
+    colorField(:,:,2) = colorField(:,:,2) + fwdIntensity * forwardColor(2);
+    colorField(:,:,3) = colorField(:,:,3) + fwdIntensity * forwardColor(3);
+    
+    % Backward velocities (negative) -> blue
+    bwdMask = velNorm < 0;
+    bwdIntensity = -velNorm .* bwdMask;  % 0 to 1 for backward (flip sign)
+    colorField(:,:,1) = colorField(:,:,1) + bwdIntensity * backwardColor(1);
+    colorField(:,:,2) = colorField(:,:,2) + bwdIntensity * backwardColor(2);
+    colorField(:,:,3) = colorField(:,:,3) + bwdIntensity * backwardColor(3);
+    
+    %% Blend color field with grayscale image
+    % Convert grayscale to RGB
+    grayRGB = repmat(curImageNorm, [1 1 3]);
+    
+    % Alpha blending: result = alpha * color + (1-alpha) * gray
+    % Alpha varies with velocity magnitude and gut mask
+    velMagnitude = abs(velNorm);
+    alphaField = velMagnitude * colorFieldAlpha .* gutMask;
+    alphaField3 = repmat(alphaField, [1 1 3]);
+    
+    blendedImage = alphaField3 .* colorField + (1 - alphaField3) .* grayRGB;
+    blendedImage = max(0, min(1, blendedImage));  % Clamp to valid range
+    
+    %% Update display
+    set(hImg, 'CData', blendedImage);
+    
+    %% Update arrows (if enabled)
+    if showArrows
+        qu = velMultiple * rawVelField;
+        qu_sparse = qu(sparseIdx);
+        set(hQuiv, 'UData', qu_sparse, 'VData', zeros(size(qu_sparse)));
+    end
+    
+    %% Update timestamp
+    if showTimestamp
+        currentTime = (i - 1) / fps;
+        set(hTime, 'String', sprintf('t = %.2f s', currentTime));
+    end
+    
+    %% Update kymograph marker
+    if showKymograph
+        currentTime = (i - 1) / fps;
+        set(hTimeLine, 'YData', [currentTime currentTime]);
+        set(hMarkerL, 'YData', currentTime);
+        set(hMarkerR, 'YData', currentTime);
+    end
+    
+    %% Write frame
+    drawnow limitrate;
+    frame = getframe(fig);
+    
+    [fh, fw, ~] = size(frame.cdata);
+    if fh ~= frameHeight || fw ~= frameWidth
+        frame.cdata = imresize(frame.cdata, [frameHeight, frameWidth]);
+    end
+    
+    writeVideo(writerObj, frame);
+end
+
+%% ========== CLEANUP ==========
+
+close(progbar2);
+close(writerObj);
+close(fig);
+
+fprintf('Enhanced PIV movie (color field) saved to: %s\n', fullfile(curAnDir, PIVOutputName));
+
+end

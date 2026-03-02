@@ -49,13 +49,17 @@ for i=1:nDirectories
     for j=1:nSubDirectories
         
         % If we want to analyze it, do so, else skip
-        if(analysisToPerform(i).bools(j,4) && analysisToPerform(i).bools(j,6))
+        if(analysisToPerform(i).bools(j,4) && analysisToPerform(i).bools(j,8))
             
             % ObtainCurrentDirectory
             curDir = strcat(mainAnalysisDirectory, filesep, mainExperimentDirectoryContents(i).name, filesep, mainExperimentSubDirectoryContentsCell{1, i}(j).name);
             
-            % Perform mask creation
-            [fftPowerPeak, fftPeakFreq, fftRPowerPeakSTD, fftRPowerPeakMin, fftRPowerPeakMax, waveFrequency, waveSpeedSlope, BByFPS, sigB, waveFitRSquared, xCorrMaxima, analyzedDeltaMarkers, waveAverageWidth] = obtainMotilityParameters(curDir, analysisVariables, interpolationOutputName, GUISize); %#ok since it is saved WARNING: Don't change these variable names
+            % Perform analysis - dispatch based on selected velocity component
+            if size(analysisVariables, 2) >= 8 && strcmp(analysisVariables{8}, 'Longitudinal')
+                [fftPowerPeak, fftPeakFreq, fftRPowerPeakSTD, fftRPowerPeakMin, fftRPowerPeakMax, waveFrequency, waveSpeedSlope, BByFPS, sigB, waveFitRSquared, xCorrMaxima, analyzedDeltaMarkers, waveAverageWidth] = obtainMotilityParameters_Longitudinal(curDir, analysisVariables, interpolationOutputName, GUISize); %#ok since it is saved WARNING: Don't change these variable names
+            else
+                [fftPowerPeak, fftPeakFreq, fftRPowerPeakSTD, fftRPowerPeakMin, fftRPowerPeakMax, waveFrequency, waveSpeedSlope, BByFPS, sigB, waveFitRSquared, xCorrMaxima, analyzedDeltaMarkers, waveAverageWidth] = obtainMotilityParameters(curDir, analysisVariables, interpolationOutputName, GUISize); %#ok since it is saved WARNING: Don't change these variable names
+            end
             
             % Save <motilityParametersOutputName>_Current.mat, <motilityParametersOutputName>_<date>.mat
             save(strcat(mainAnalysisDirectory, filesep, mainExperimentDirectoryContents(i).name, filesep, mainExperimentSubDirectoryContentsCell{1, i}(j).name, filesep, motilityParametersOutputName, '_Current'), 'fftPowerPeak', 'fftPeakFreq', 'fftRPowerPeakSTD', 'fftRPowerPeakMin', 'fftRPowerPeakMax', 'waveFrequency', 'waveSpeedSlope', 'BByFPS', 'sigB', 'waveFitRSquared', 'xCorrMaxima', 'analyzedDeltaMarkers', 'waveAverageWidth');

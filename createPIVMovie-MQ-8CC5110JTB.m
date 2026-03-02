@@ -176,7 +176,6 @@ if do_histEq
     maxI = double(max(firstIm(:)));
 end
 scale = origMicronsPerPixel * origResReduction;
-velocityScale = scale * fps;  % pixels/frame -> um/s conversion factor
 
 %% ========== DETERMINE VELOCITY RANGE ==========
 
@@ -200,7 +199,7 @@ elseif maxVelocityForColor == 0
     sampleFrames = round(linspace(1, size(gutMeshVelsPCoords, 4), min(20, size(gutMeshVelsPCoords, 4))));
     allMetric = [];
     for sf = sampleFrames
-        colMetric = computeColumnMetric(gutMeshVelsPCoords, sf, componentIdx, isLongitudinal) * velocityScale;
+        colMetric = computeColumnMetric(gutMeshVelsPCoords, sf, componentIdx, isLongitudinal);
         allMetric = [allMetric, colMetric];
     end
     maxVelocityForColor = prctile(abs(allMetric), 95);
@@ -211,11 +210,11 @@ end
 
 if showKymograph
     if isLongitudinal
-        qstMap = squeeze(-mean(gutMeshVelsPCoords(:,:,1,:), 1))' * velocityScale;
+        qstMap = squeeze(-mean(gutMeshVelsPCoords(:,:,1,:), 1))';
     else
         nMeshRowsForKymo = size(gutMeshVelsPCoords, 1);
         qstMap = 2 * squeeze(mean(gutMeshVelsPCoords(floor(nMeshRowsForKymo/2)+1:end,:,2,:), 1) - ...
-                             mean(gutMeshVelsPCoords(1:floor(nMeshRowsForKymo/2),:,2,:), 1))' * velocityScale;
+                             mean(gutMeshVelsPCoords(1:floor(nMeshRowsForKymo/2),:,2,:), 1))';
     end
     
     translateMarkerNumToMicron = scale * round(mean(diff(squeeze(gutMesh(1,:,1,1)))));
@@ -486,7 +485,7 @@ for i = startingFrame:deltaF:endingFrame-1
     
     %% Compute per-column metric for this frame (matches kymograph formula)
     curIndex = min(i - (i ~= 1), size(gutMeshVelsPCoords, 4));
-    colMetric = computeColumnMetric(gutMeshVelsPCoords, curIndex, componentIdx, isLongitudinal) * velocityScale;
+    colMetric = computeColumnMetric(gutMeshVelsPCoords, curIndex, componentIdx, isLongitudinal);
     
     %% Update cell colors - all cells in a column share the same metric value
     if useDiscreteCells

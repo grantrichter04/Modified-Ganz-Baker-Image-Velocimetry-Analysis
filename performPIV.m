@@ -50,17 +50,18 @@ for i=1:nDirectories
     for j=1:nSubDirectories
         fprintf('   Folder %d of %d; subFolder %d of %d\n', i, nDirectories, j, nSubDirectories);
         % If we want to analyze it, do so, else skip
-        if(analysisToPerform(i).bools(j,1) && analysisToPerform(i).bools(j,6))
+        if(analysisToPerform(i).bools(j,1) && analysisToPerform(i).bools(j,8))
             
-            % ObtainCurrentDirectory
-            curDir = strcat(mainExperimentDirectory, filesep, mainExperimentDirectoryContents(i).name, filesep, mainExperimentSubDirectoryContentsCell{1, i}(j).name);
+            % Obtain current directories (experiment and analysis)
+            curExpDir = strcat(mainExperimentDirectory, filesep, mainExperimentDirectoryContents(i).name, filesep, mainExperimentSubDirectoryContentsCell{1, i}(j).name);
+            curAnDir = strcat(mainAnalysisDirectory, filesep, mainExperimentDirectoryContents(i).name, filesep, mainExperimentSubDirectoryContentsCell{1, i}(j).name);
             
             % Perform PIV, obtain rawPIVOutput
-            [p, s, x, y, u, v, typevector, imageDirectory, filenames, u_filt, v_filt, typevector_filt] = obtainRawPIVOutput(curDir, analysisVariables); %#ok since it is saved WARNING: Don't change these variable names
+            [p, s, x, y, u, v, typevector, imageDirectory, filenames, u_filt, v_filt, typevector_filt] = obtainRawPIVOutput(curExpDir, analysisVariables); %#ok since it is saved WARNING: Don't change these variable names
             
             % Save <rawPIVOutputName>_Current.mat, <rawPIVOutputName>_<date>.mat
-            save(strcat(mainAnalysisDirectory, filesep, mainExperimentDirectoryContents(i).name, filesep, mainExperimentSubDirectoryContentsCell{1, i}(j).name, filesep, rawPIVOutputName, '_Current'), 'p', 's', 'x', 'y', 'u', 'v', 'typevector', 'imageDirectory', 'filenames', 'u_filt', 'v_filt', 'typevector_filt');
-            save(strcat(mainAnalysisDirectory, filesep, mainExperimentDirectoryContents(i).name, filesep, mainExperimentSubDirectoryContentsCell{1, i}(j).name, filesep, rawPIVOutputName, '_', date), 'p', 's', 'x', 'y', 'u', 'v', 'typevector', 'imageDirectory', 'filenames', 'u_filt', 'v_filt', 'typevector_filt');
+            save(strcat(curAnDir, filesep, rawPIVOutputName, '_Current'), 'p', 's', 'x', 'y', 'u', 'v', 'typevector', 'imageDirectory', 'filenames', 'u_filt', 'v_filt', 'typevector_filt');
+            save(strcat(curAnDir, filesep, rawPIVOutputName, '_', date), 'p', 's', 'x', 'y', 'u', 'v', 'typevector', 'imageDirectory', 'filenames', 'u_filt', 'v_filt', 'typevector_filt');
             
             % Update currentAnalysisPerformed
             currentAnalysisPerformed(i).bools(j,1) = true;

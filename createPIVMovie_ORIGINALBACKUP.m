@@ -1,38 +1,7 @@
-% createPIVMovie_standalone.m
-% based on createPIVMovie.m (Ryan Baker)
-%
 % Function that superimposes velocity vectors from PIV onto source image frames,
-% creating a PIV movie.
-% Can run independently of the analyzeMotility GUI
-% 
-% Inputs
-%     imagePath : folder containing images; if empty, dialog box
-%     analysisParamsPath: path containing analysisParamsFile. 
-%                    Leave blank for current directory. If analysisParamsFile
-%                    is selected from a dialog box, ...Path will be set by
-%                    this. Don't include final "\"
-%     analysisParamsFile : file containing analysis results for this image set; 
-%                    probably "currentAnalysesPerformed.mat"
-%                    if empty, dialog box
-%     PIVoutputFilePath : path containing PIVoutputFile
-%                    Leave blank for current directory. If analysisParamsFile
-%                    is selected from a dialog box, ...Path will be set by
-%                    this. Don't include final "\"
-%     PIVoutputFile : file containing PIV output, including gutMesh, 
-%                     gutMeshVels, gutMeshVelsPCoords, thetas
-%                     if empty, dialog box
-%     PIVVideoParams : array of PIV parameters; default [0, 1, 100; 0, 1, 100];
-%                    first 3 are start : deltaFrames : end Frame percent
-%                    next 3 are positions.
-%     PIVOutputName : output file name, default 'PIVAnimation.avi';
-%     do_histEq: default false; if true, apply histogram equalization to the images.
-%     velMultiple : multiply velocity by this for quiver length; formerly
-%                    5; new default 20.
-%     quiverColor : arrow color; default [0.9 0.6 0.3] (orange)
+% creating a PIV movie
 %
-% Outputs
-%    None.
-%    Will write the PIV movie to PIVoutputFilePath, filename PIVOutputName
+% Ryan Baker
 %
 % Last modified: Oct. 10, 2023 -- Raghuveer Parthasarathy
 %    - Avoid histogram equalization (optional)
@@ -43,58 +12,20 @@
 %
 % To do:
 %    - Make a version of this that avoids the GUI
-%
-% Oct. 10, 2023 -- Raghuveer Parthasarathy
-% Last modified: Dec. 21 2023 (add quiverColor input) -- Raghuveer Parthasarathy
 
-function createPIVMovie_standalone(imagePath, analysisParamsPath, ...
-    analysisParamsFile, PIVoutputFilePath, PIVoutputFile, PIVVideoParams, ...
-    PIVOutputName, do_histEq, velMultiple, quiverColor)
+function createPIVMovie(curAnDir, curExpDir, analysisVariables, PIVVideoParams, PIVOutputName, interpolationOutputName)
 
-if ~exist('imagePath', 'var') || isempty(imagePath)
-    imagePath = uigetdir([], 'Folder containing images');
-end
-if ~exist('analysisParamsPath', 'var') || isempty(analysisParamsPath)
-    analysisParamsPath = pwd;
-end
-if ~exist('analysisParamsFile', 'var') || isempty(analysisParamsFile)
-    [analysisParamsFile, analysisParamsPath] = uigetfile('', 'Analysis results (currentAnalysesPerformed.mat)');
-end
-if ~exist('PIVoutputFilePath', 'var') || isempty(PIVoutputFilePath)
-    PIVoutputFilePath = pwd;
-end
-if ~exist('PIVoutputFile', 'var') || isempty(PIVoutputFile)
-    [PIVoutputFile, PIVoutputFilePath] = uigetfile('', 'PIV output file (processedPIVOutput_Current.mat)');
-end
-if ~exist('PIVVideoParams', 'var') || isempty(PIVVideoParams)
-    PIVVideoParams = [0, 1, 100; 0, 1, 100];
-end
-if ~exist('PIVOutputName', 'var') || isempty(PIVOutputName)
-    PIVOutputName = 'PIVAnimation.avi';
-end
-if ~exist('do_histEq', 'var') || isempty(do_histEq)
-    do_histEq = false;
-end
-if ~exist('velMultiple', 'var') || isempty(velMultiple)
-    velMultiple = 20;
-end
-if ~exist('quiverColor', 'var') || isempty(quiverColor)
-    quiverColor = [0.9 0.6 0.3]; % For Quiver
-end
-
-load(strcat(analysisParamsPath,filesep,analysisParamsFile), 'analysisVariables');
+quiverColor = [0.9 0.6 0.3]; % For Quiver
+velMultiple = 20; % multiply velocity by this for quiver length; formerly 5
+do_histEq = false; % if true apply histogram equalization to the images.
 
 % % Load data and images from directory, define variables
 suffix = analysisVariables{1};
-
 %templateSize = str2double(analysisVariables{2});
 %fps = str2double(analysisVariables{3});
 %origMicronsPerPixel = str2double(analysisVariables{4});
-
 origResReduction = str2double(analysisVariables{5});
-% load(strcat(curAnDir,filesep,interpolationOutputName,'_Current.mat')); % Assumes file has gutMesh, gutMeshVels, gutMeshVelsPCoords, thetas
-load(strcat(PIVoutputFilePath, filesep, PIVoutputFile))
-
+load(strcat(curAnDir,filesep,interpolationOutputName,'_Current.mat')); % Assumes file has gutMesh, gutMeshVels, gutMeshVelsPCoords, thetas
 startTP = PIVVideoParams(1,1)/100;
 deltaF = PIVVideoParams(1,2);
 endTP = PIVVideoParams(1,3)/100;
@@ -102,16 +33,14 @@ startX = PIVVideoParams(2,1)/100;
 resReduceNew = PIVVideoParams(2,2);
 endX = PIVVideoParams(2,3)/100;
 resReduce = resReduceNew*origResReduction;
-
-direc = dir([imagePath,filesep,suffix]); 
+direc = dir([curExpDir,filesep,suffix]); 
 baseFilenames={};
 [baseFilenames{1:length(direc),1}] = deal(direc.name);
 baseFilenames = sortrows(baseFilenames); %sort all image files
 amount = length(baseFilenames);
 count=1; % Linear index that travels through all multipages monotonically
 filenames = {};
-
-writerObj = VideoWriter(strcat(PIVoutputFilePath,filesep,PIVOutputName),'Uncompressed AVI');
+writerObj = VideoWriter(strcat(curAnDir,filesep,PIVOutputName),'Uncompressed AVI');
 showOnlyHorizontalComponent = true;
 
 % Progress bar
@@ -129,7 +58,7 @@ if(strcmp(suffix, '*.tif'))
         waitbar(i/amount, progbar1, ...
             sprintf('Obtaining image information for image stack %d of %d', i, amount));
         
-        info = imfinfo([imagePath filesep baseFilenames{i}]);
+        info = imfinfo([curExpDir filesep baseFilenames{i}]);
         nI=size(info,1);
         
         for j=1:nI
@@ -158,7 +87,7 @@ close(progbar1);
 
 % Video properties
 nF=size(filenames,2);
-info = imfinfo([imagePath filesep baseFilenames{1}]);
+info = imfinfo([curExpDir filesep baseFilenames{1}]);
 numRows = info(1).Height;
 numCols = info(1).Width;
 

@@ -1,0 +1,369 @@
+% createPIVMovie.m (ENHANCED VERSION - OPTIMIZED)
+% 
+% Drop-in replacement for the original createPIVMovie.m with improved visualization.
+% Uses efficient graphics updating (create once, update data) for fast rendering.
+%
+% Features:
+%   - Timestamp overlay showing current time
+%   - Physical scale bar with label
+%   - Velocity reference arrow legend
+%   - Direction-based arrow coloring (forward=orange, backward=blue)
+%   - Synchronized kymograph (QSTMap) inset showing wave activity
+%
+% Original by Ryan Baker
+% Enhanced January 2026
+
+function createPIVMovie(curAnDir, curExpDir, analysisVariables, PIVVideoParams, PIVOutputName, interpolationOutputName)
+
+%% ========== CONFIGURABLE PARAMETERS ==========
+
+% Arrow appearance
+forwardColor = [0.9 0.6 0.3];    % Orange for forward motion
+backwardColor = [0.3 0.5 0.9];   % Blue for backward motion
+velMultiple = 20;                 % Arrow length multiplier
+arrowLineWidth = 2;
+
+% Annotations (set to false to speed up further)
+showTimestamp = true;
+showScaleBar = true;
+showVelocityLegend = true;
+showKymograph = true;             % Set false for faster rendering
+
+% Video settings
+do_histEq = false;
+showOnlyHorizontalComponent = true;
+scaleBarMicrons = 0;              % 0 = auto
+refVelocity = 5;                  % µm/s for legend
+
+%% ========== LOAD DATA AND SETUP ==========
+
+suffix = analysisVariables{1};
+fps = str2double(analysisVariables{3});
+origMicronsPerPixel = str2double(analysisVariables{4});
+origResReduction = str2double(analysisVariables{5});
+
+startTP = PIVVideoParams(1,1)/100;
+deltaF = PIVVideoParams(1,2);
+endTP = PIVVideoParams(1,3)/100;
+startX = PIVVideoParams(2,1)/100;
+resReduceNew = PIVVideoParams(2,2);
+endX = PIVVideoParams(2,3)/100;
+resReduce = resReduceNew * origResReduction;
+micronsPerPixel = origMicronsPerPixel * resReduce;
+
+load(fullfile(curAnDir, [interpolationOutputName '_Current.mat']), ...
+    'gutMesh', 'gutMeshVels', 'gutMeshVelsPCoords', 'thetas');
+
+%% ========== BUILD FILENAME LIST ==========
+
+direc = dir(fullfile(curExpDir, suffix)); 
+baseFilenames = {};
+[baseFilenames{1:length(direc),1}] = deal(direc.name);
+baseFilenames = sortrows(baseFilenames);
+amount = length(baseFilenames);
+count = 1;
+filenames = {};
+
+progbar1 = waitbar(0, 'Obtaining image information...');
+
+if strcmp(suffix, '*.tif')
+    for i = 1:amount
+        waitbar(i/amount, progbar1);
+        info = imfinfo(fullfile(curExpDir, baseFilenames{i}));
+        nI = size(info, 1);
+        for j = 1:nI
+            filenames{count}.name = info.Filename;
+            filenames{count}.index = j;
+            count = count + 1;
+        end
+    end
+else
+    for i = 1:amount
+        filenames{i}.name = baseFilenames{i};
+        filenames{i}.index = 1;
+    end
+end
+close(progbar1);
+
+%% ========== VIDEO PROPERTIES ==========
+
+nF = size(filenames, 2);
+info = imfinfo(fullfile(curExpDir, baseFilenames{1}));
+numRows = info(1).Height;
+numCols = info(1).Width;
+
+startingFrame = round(nF * startTP + 1);
+endingFrame = round(nF * endTP);
+startingPosition = round(numCols * startX + 1);
+endingPosition = round(numCols * endX);
+
+dispRows = floor(numRows / resReduce);
+dispCols = floor((endingPosition - startingPosition + 1) / resReduce);
+
+%% ========== SCALE BAR ==========
+
+if scaleBarMicrons == 0
+    imageWidthMicrons = dispCols * micronsPerPixel;
+    magnitude = 10^floor(log10(imageWidthMicrons * 0.12));
+    scaleBarMicrons = round(imageWidthMicrons * 0.12 / magnitude) * magnitude;
+    if scaleBarMicrons == 0, scaleBarMicrons = 50; end
+end
+scaleBarPixels = scaleBarMicrons / micronsPerPixel;
+
+%% ========== KYMOGRAPH DATA ==========
+
+if showKymograph
+    qstMap = squeeze(-mean(gutMeshVelsPCoords(:,:,1,:), 1))';
+    scale = origMicronsPerPixel * origResReduction;
+    translateMarkerNumToMicron = scale * round(mean(diff(squeeze(gutMesh(1,:,1,1)))));
+    qstXAxis = (0:size(qstMap,2)-1) * translateMarkerNumToMicron;
+    qstYAxis = (0:size(qstMap,1)-1) / fps;
+end
+
+%% ========== HISTOGRAM EQ PREP ==========
+
+if do_histEq
+    firstIm = imread(fullfile(filenames{1}.name), 'Index', filenames{1}.index, ...
+        'PixelRegion', {[1 resReduce numRows], [startingPosition resReduce endingPosition]});
+    firstImHistExample = histeq(firstIm);
+    maxI = double(max(firstImHistExample(:)));
+    minI = double(min(firstImHistExample(:)));
+end
+
+%% ========== SETUP VIDEO WRITER ==========
+
+writerObj = VideoWriter(fullfile(curAnDir, PIVOutputName), 'Uncompressed AVI');
+open(writerObj);
+
+%% ========== CREATE FIGURE WITH FIXED SIZE ==========
+
+if showKymograph
+    figWidth = 1200;
+    figHeight = 500;
+else
+    figWidth = 900;
+    figHeight = 600;
+end
+
+fig = figure('Position', [100 100 figWidth figHeight], ...
+    'Visible', 'on', ...
+    'Resize', 'off', ...               % Prevent resizing
+    'MenuBar', 'none', ...             % Remove menu bar
+    'ToolBar', 'none');                % Remove toolbar
+set(fig, 'Renderer', 'zbuffer', 'Color', [0.15 0.15 0.15]);
+
+% Lock the figure size
+set(fig, 'Units', 'pixels');
+drawnow;  % Force figure to render at correct size
+
+%% ========== CREATE MAIN AXES ==========
+
+if showKymograph
+    ax_main = axes('Position', [0.01 0.06 0.68 0.92]);
+else
+    ax_main = axes('Position', [0.03 0.05 0.94 0.92]);
+end
+
+% Read first frame to initialize
+firstImage = imread(fullfile(filenames{startingFrame}.name), ...
+    'Index', filenames{startingFrame}.index, ...
+    'PixelRegion', {[1 resReduce numRows], [startingPosition resReduce endingPosition]});
+if do_histEq
+    firstImage = (double(imhistmatch(firstImage, firstImHistExample)) - minI) / (maxI - minI);
+else
+    firstImage = double(firstImage);
+end
+
+% Create image object ONCE
+hImg = imshow(firstImage, [], 'Parent', ax_main);
+hold(ax_main, 'on');
+axis(ax_main, 'off');
+
+% Get initial velocity data
+qx = gutMesh(:,:,1);
+qy = gutMesh(:,:,2);
+qu_init = velMultiple * gutMeshVels(:,:,1,1);
+qv_init = qu_init * 0;
+rawU_init = gutMeshVels(:,:,1,1);
+
+% Create quiver objects ONCE
+fwdMask = rawU_init > 0;
+bwdMask = ~fwdMask;
+
+hQuivFwd = quiver(ax_main, qx(fwdMask), qy(fwdMask), qu_init(fwdMask), qv_init(fwdMask), 0, ...
+    'Color', forwardColor, 'LineWidth', arrowLineWidth, 'MaxHeadSize', 0.4);
+hQuivBwd = quiver(ax_main, qx(bwdMask), qy(bwdMask), qu_init(bwdMask), qv_init(bwdMask), 0, ...
+    'Color', backwardColor, 'LineWidth', arrowLineWidth, 'MaxHeadSize', 0.4);
+
+% Create timestamp text
+if showTimestamp
+    hTime = text(ax_main, 12, 25, 't = 0.00 s', 'Color', 'white', ...
+        'FontSize', 12, 'FontWeight', 'bold', 'BackgroundColor', [0 0 0 0.6], ...
+        'Margin', 3, 'VerticalAlignment', 'top');
+end
+
+% Scale bar (static)
+if showScaleBar
+    barY = dispRows - 20;
+    barX = 20;
+    line(ax_main, [barX barX+scaleBarPixels], [barY barY], 'Color', 'white', 'LineWidth', 4);
+    line(ax_main, [barX barX], [barY-5 barY+5], 'Color', 'white', 'LineWidth', 2);
+    line(ax_main, [barX+scaleBarPixels barX+scaleBarPixels], [barY-5 barY+5], 'Color', 'white', 'LineWidth', 2);
+    text(ax_main, barX + scaleBarPixels/2, barY - 18, sprintf('%d \\mum', scaleBarMicrons), ...
+        'Color', 'white', 'FontSize', 11, 'HorizontalAlignment', 'center', ...
+        'BackgroundColor', [0 0 0 0.5], 'Margin', 2);
+end
+
+% Velocity legend (static) - repositioned to avoid overlap
+if showVelocityLegend
+    refArrowLen = refVelocity * velMultiple;
+    legX = dispCols - 180;  % Moved further left
+    legY = dispRows - 55;   % Moved up a bit
+    
+    % Velocity label above arrows
+    text(ax_main, legX + refArrowLen/2 + 20, legY - 20, sprintf('%d \\mum/s', refVelocity), ...
+        'Color', 'white', 'FontSize', 10, 'HorizontalAlignment', 'center', ...
+        'BackgroundColor', [0 0 0 0.5], 'Margin', 2);
+    
+    % Forward arrow with label to the left
+    text(ax_main, legX - 8, legY, 'fwd', 'Color', forwardColor, ...
+        'FontSize', 10, 'FontWeight', 'bold', 'HorizontalAlignment', 'right');
+    quiver(ax_main, legX, legY, refArrowLen, 0, 0, 'Color', forwardColor, ...
+        'LineWidth', arrowLineWidth, 'MaxHeadSize', 0.5);
+    
+    % Backward arrow with label to the right
+    quiver(ax_main, legX + refArrowLen + 40, legY + 22, -refArrowLen, 0, 0, ...
+        'Color', backwardColor, 'LineWidth', arrowLineWidth, 'MaxHeadSize', 0.5);
+    text(ax_main, legX + refArrowLen + 48, legY + 22, 'bwd', 'Color', backwardColor, ...
+        'FontSize', 10, 'FontWeight', 'bold', 'HorizontalAlignment', 'left');
+end
+
+hold(ax_main, 'off');
+
+%% ========== CREATE KYMOGRAPH PANEL ==========
+
+if showKymograph
+    ax_kymo = axes('Position', [0.72 0.12 0.26 0.78]);  % Adjusted position
+    hKymo = imagesc(ax_kymo, qstXAxis, qstYAxis, qstMap);
+    colormap(ax_kymo, 'jet');
+    set(ax_kymo, 'YDir', 'normal');
+    hold(ax_kymo, 'on');
+    
+    % Time marker line and arrows
+    hTimeLine = line(ax_kymo, [qstXAxis(1) qstXAxis(end)], [0 0], ...
+        'Color', 'white', 'LineWidth', 2);
+    hMarkerL = plot(ax_kymo, qstXAxis(1), 0, '<', 'Color', 'white', ...
+        'MarkerSize', 6, 'MarkerFaceColor', 'white');
+    hMarkerR = plot(ax_kymo, qstXAxis(end), 0, '>', 'Color', 'white', ...
+        'MarkerSize', 6, 'MarkerFaceColor', 'white');
+    hold(ax_kymo, 'off');
+    
+    % Labels
+    xlabel(ax_kymo, 'Position (\mum)', 'Color', 'white', 'FontSize', 10);
+    ylabel(ax_kymo, 'Time (s)', 'Color', 'white', 'FontSize', 10);
+    title(ax_kymo, 'Kymograph', 'Color', 'white', 'FontSize', 11, 'FontWeight', 'bold');
+    set(ax_kymo, 'XColor', 'white', 'YColor', 'white', 'Color', [0.1 0.1 0.1]);
+    
+    % Colorbar - positioned below kymograph
+    cb = colorbar(ax_kymo, 'Location', 'southoutside');
+    cb.Color = 'white';
+    cb.FontSize = 9;
+    cb.Label.String = 'Velocity (\mum/s)';
+    cb.Label.Color = 'white';
+    
+    % Readjust kymograph position after colorbar
+    set(ax_kymo, 'Position', [0.72 0.20 0.26 0.72]);
+end
+
+%% ========== FORCE FIGURE TO FINAL SIZE AND GET FRAME SIZE ==========
+
+drawnow;
+pause(0.1);  % Give time to render
+
+% Get the actual frame size for the video
+testFrame = getframe(fig);
+[frameHeight, frameWidth, ~] = size(testFrame.cdata);
+
+% Update video writer if needed (shouldn't be necessary but just in case)
+close(writerObj);
+writerObj = VideoWriter(fullfile(curAnDir, PIVOutputName), 'Uncompressed AVI');
+open(writerObj);
+
+% Write first frame
+writeVideo(writerObj, testFrame);
+
+%% ========== MAIN FRAME LOOP ==========
+
+totalFrames = length(startingFrame:deltaF:endingFrame-1);
+frameCount = 1;  % Already wrote first frame
+progbar2 = waitbar(0, 'Generating PIV animation...');
+
+for i = (startingFrame + deltaF):deltaF:endingFrame-1
+    frameCount = frameCount + 1;
+    
+    if mod(frameCount, 50) == 0
+        waitbar(frameCount/totalFrames, progbar2, ...
+            sprintf('Frame %d of %d', frameCount, totalFrames));
+    end
+    
+    %% Update image data
+    curImage = imread(fullfile(filenames{i}.name), 'Index', filenames{i}.index, ...
+        'PixelRegion', {[1 resReduce numRows], [startingPosition resReduce endingPosition]});
+    if do_histEq
+        curImage = (double(imhistmatch(curImage, firstImHistExample)) - minI) / (maxI - minI);
+    else
+        curImage = double(curImage);
+    end
+    set(hImg, 'CData', curImage);
+    
+    %% Update velocity arrows
+    curIndex = min(i - (i ~= 1), size(gutMeshVels, 4));
+    qu = velMultiple * gutMeshVels(:,:,1,curIndex);
+    qv = qu * 0;
+    rawU = gutMeshVels(:,:,1,curIndex);
+    
+    fwdMask = rawU > 0;
+    bwdMask = ~fwdMask;
+    
+    set(hQuivFwd, 'XData', qx(fwdMask), 'YData', qy(fwdMask), ...
+        'UData', qu(fwdMask), 'VData', qv(fwdMask));
+    set(hQuivBwd, 'XData', qx(bwdMask), 'YData', qy(bwdMask), ...
+        'UData', qu(bwdMask), 'VData', qv(bwdMask));
+    
+    %% Update timestamp
+    if showTimestamp
+        currentTime = (i - 1) / fps;
+        set(hTime, 'String', sprintf('t = %.2f s', currentTime));
+    end
+    
+    %% Update kymograph time marker
+    if showKymograph
+        currentTime = (i - 1) / fps;
+        set(hTimeLine, 'YData', [currentTime currentTime]);
+        set(hMarkerL, 'YData', currentTime);
+        set(hMarkerR, 'YData', currentTime);
+    end
+    
+    %% Capture and write frame
+    drawnow limitrate;
+    frame = getframe(fig);
+    
+    % Ensure consistent frame size (crop or pad if necessary)
+    [fh, fw, ~] = size(frame.cdata);
+    if fh ~= frameHeight || fw ~= frameWidth
+        % Resize to match expected dimensions
+        frame.cdata = imresize(frame.cdata, [frameHeight, frameWidth]);
+    end
+    
+    writeVideo(writerObj, frame);
+end
+
+%% ========== CLEANUP ==========
+
+close(progbar2);
+close(writerObj);
+close(fig);
+
+fprintf('Enhanced PIV movie saved to: %s\n', fullfile(curAnDir, PIVOutputName));
+
+end

@@ -63,8 +63,11 @@ interpolationOutputName = 'processedPIVOutput'; % WARNING: Don't change this var
 motilityParametersOutputName = 'motilityParameters'; % WARNING: Don't change this variable name
 PIVOutputName = 'PIVAnimation.avi'; % WARNING: Don't change this variable name
 fourierBoundsDefaults = {'4', '1'};
+velocityComponentDefault = 'Transverse';  % 'Transverse' or 'Longitudinal'
+globalLUTDefaults = {'auto', 'auto'};     % 'auto' or numeric string for global color range
+temporalSmoothingDefault = '5';           % Frames for Gaussian temporal smoothing (0 = off)
 PIVVideoParams = [0, 1, 100; 0, 1, 100];
-nAnalysisCheckboxTypes = 6;
+nAnalysisCheckboxTypes = 8;
 
 % Initialize GUI variables
 startGUI = [1, 1]; % X and Y location of the GUI corner (current units, default is pixels)
@@ -382,13 +385,45 @@ function [currentAnalysisPerformed, analysisVariables] = openOrCreateCurrentAnal
         currentAnalysisPerformed = currentAnalysisFile.currentAnalysisPerformed;
         analysisFieldNames = fieldnames(currentAnalysisFile);
         if(length(analysisFieldNames) == 1)
-            analysisVariables = {'*.tif','32','5','0.1625','1', fourierBoundsDefaults{1}, fourierBoundsDefaults{2}};
+            analysisVariables = {'*.tif','32','5','0.1625','1', fourierBoundsDefaults{1}, fourierBoundsDefaults{2}, velocityComponentDefault, globalLUTDefaults{1}, globalLUTDefaults{2}, temporalSmoothingDefault};
         else
             analysisVariables = currentAnalysisFile.analysisVariables;
         end
         if(size(analysisVariables,2) == 5) % Using old variables; update
             analysisVariables{6} = fourierBoundsDefaults{1};
             analysisVariables{7} = fourierBoundsDefaults{2};
+        end
+        if(size(analysisVariables,2) <= 7) % Pre-component/LUT variables; update
+            analysisVariables{8} = velocityComponentDefault;
+            analysisVariables{9} = globalLUTDefaults{1};
+            analysisVariables{10} = globalLUTDefaults{2};
+        end
+        if(size(analysisVariables,2) <= 10) % Pre-temporal smoothing; update
+            analysisVariables{11} = temporalSmoothingDefault;
+        end
+        
+        % Migrate old bools arrays: expand from fewer columns to 8
+        % Old layout (6 cols): PIV(1), Outline(2), Interp(3), Analyze(4), Video(5), Use(6)
+        % New layout (8 cols): PIV(1), Outline(2), Interp(3), Analyze(4), Video(5), Waves(6), TIFF(7), Use(8)
+        needsMigration = false;
+        for i = 1:numel(currentAnalysisPerformed)
+            oldCols = size(currentAnalysisPerformed(i).bools, 2);
+            if oldCols < nAnalysisCheckboxTypes
+                nRows = size(currentAnalysisPerformed(i).bools, 1);
+                oldBools = currentAnalysisPerformed(i).bools;
+                newBools = false(nRows, nAnalysisCheckboxTypes);
+                % Copy existing columns (1 through oldCols-1 are analysis steps)
+                newBools(:, 1:oldCols-1) = oldBools(:, 1:oldCols-1);
+                % Copy Use column (was last column) to new last position
+                newBools(:, nAnalysisCheckboxTypes) = oldBools(:, oldCols);
+                % New columns (Waves, TIFF) default to false
+                currentAnalysisPerformed(i).bools = newBools;
+                needsMigration = true;
+            end
+        end
+        if needsMigration
+            fprintf('Migrated analysis checkboxes from %d to %d columns.\n', oldCols, nAnalysisCheckboxTypes);
+            save(strcat(mainAnalysisDirectory, filesep, currentAnalysesPerformedFileName), 'currentAnalysisPerformed', 'analysisVariables');
         end
         
     elseif(strcmp(createFile,'Yes'))
@@ -409,7 +444,7 @@ function [currentAnalysisPerformed, analysisVariables] = openOrCreateCurrentAnal
         end
         
         % Save this file for future reference, update after any analysis
-        analysisVariables = {'*.tif','32','5','0.1625','1', fourierBoundsDefaults{1}, fourierBoundsDefaults{2}};
+        analysisVariables = {'*.tif','64','2','0.64','1', fourierBoundsDefaults{1}, fourierBoundsDefaults{2}, velocityComponentDefault, globalLUTDefaults{1}, globalLUTDefaults{2}, temporalSmoothingDefault};
         save(strcat(mainAnalysisDirectory, filesep, currentAnalysesPerformedFileName),'currentAnalysisPerformed','analysisVariables'); % WARNING: If currentAnalysisPerformed name is changed, you'll have to manually change this string  IN MANY LOCATIONS!!!
         
     else
@@ -431,11 +466,11 @@ function generateProcessingControlPanelListing
     curLinearizedAnalysisIndex = 0;
     textIconHeight = 18;
     textBufferSpacing = 5; % How much spacing is between each line of text
-    checkBoxSpacing = 25;
+    checkBoxSpacing = 32;
     checkBoxWidth = 20;
     checkboxHeight = 20;
-    subFolderWidth = 40;
-    subSubFolderWidth = 80 - subFolderWidth - textBufferSpacing;
+    subFolderWidth = 100;
+    subSubFolderWidth = 175 - subFolderWidth - textBufferSpacing;
     nSubSubDirectories = 0;
     subDirTitleColor = [1, 0.6, 0.1];
     subDirTitleTextColor = [1, 1, 1];
@@ -679,6 +714,28 @@ function generateProcessingControlPanelListing
                 
             case 6
                 % Create the current subfolder label
+                curLabelWidth = [-10, 0, 35, 0];
+                uicontrol('Parent',subProcPanel,...
+                    'Style','text',...
+                    'String','Waves',...
+                    'backgroundcolor',panelColor,...
+                    'Position',curLabelPosition + curLabelWidth,...
+                    'FontName','Gill Sans',...
+                    'FontSize',textSize + textSizeModified);
+                
+            case 7
+                % Create the current subfolder label
+                curLabelWidth = [-5, 0, 28, 0];
+                uicontrol('Parent',subProcPanel,...
+                    'Style','text',...
+                    'String','TIFF',...
+                    'backgroundcolor',panelColor,...
+                    'Position',curLabelPosition + curLabelWidth,...
+                    'FontName','Gill Sans',...
+                    'FontSize',textSize + textSizeModified);
+                
+            case 8
+                % Create the current subfolder label
                 curLabelWidth = [0, 0, 25, 0];
                 uicontrol('Parent',subProcPanel,...
                     'Style','text',...
@@ -841,7 +898,19 @@ function generateProcessingControlPanelListing
         % If the file exists (N/A), load it, otherwise create it or don't
         if(strcmp(questAns,'N/A'))
             
-            implay(strcat(curAnDir,filesep,PIVOutputName))
+            % Search for descriptive PIV video filenames (new naming convention)
+            vidFiles = [dir(fullfile(curAnDir, 'PIVAnimation_*.avi')); ...
+                        dir(fullfile(curAnDir, 'PIVAnimation_*.mp4'))];
+            if ~isempty(vidFiles)
+                % Use the most recently modified one
+                [~, newest] = max([vidFiles.datenum]);
+                implay(fullfile(curAnDir, vidFiles(newest).name));
+            elseif exist(fullfile(curAnDir, PIVOutputName), 'file')
+                % Fall back to legacy filename
+                implay(fullfile(curAnDir, PIVOutputName));
+            else
+                errordlg('No PIV video file found in this directory.', 'File Not Found');
+            end
             
         elseif(strcmp(questAns,'Yes'))
             
@@ -1192,6 +1261,90 @@ function generateAnalysisPanelListing
         'FontName','Gill Sans',...
         'FontSize',textSize);
     
+    % === VELOCITY COMPONENT SELECTOR ===
+    velComponentTextPosition = VideoXTextPosition + [0, - 2*textIconHeight - panelBufferSpacing, 0, 0];
+    velComponentInputPosition = velComponentTextPosition + [velComponentTextPosition(3) + textBufferSpacing, 0, answerFieldDropDownWidth - velComponentTextPosition(3), 0];
+    
+    % Determine which dropdown item should be selected
+    if strcmp(analysisVariables{8}, 'Longitudinal')
+        velComponentValue = 2;
+    else
+        velComponentValue = 1;  % Transverse is default
+    end
+    
+    uicontrol('Parent',f,...
+        'Style','text',...
+        'String','Velocity component to analyze?',...
+        'BackgroundColor',panelColor,...
+        'ForegroundColor',textFGColor,...
+        'Position',velComponentTextPosition,...
+        'HorizontalAlignment','left',...
+        'FontName','Gill Sans',...
+        'FontSize',textSize);
+    uicontrol('Parent',f,...
+        'Style','popupmenu',...
+        'String',{'Transverse', 'Longitudinal'},...
+        'Value', velComponentValue,...
+        'BackgroundColor',panelColor,...
+        'ForegroundColor',textFGColor,...
+        'Position',velComponentInputPosition,...
+        'Callback', {@velComponent_Callback},...
+        'FontName','Gill Sans',...
+        'FontSize',textSize);
+    
+    % === GLOBAL COLOR LUT RANGE ===
+    globalLUTTextPosition = velComponentTextPosition + [0, - 2*textIconHeight - panelBufferSpacing, 0, 0];
+    globalLUTMinInputPosition = globalLUTTextPosition + [globalLUTTextPosition(3) + textBufferSpacing, 0, answerFieldEditWidth/2 - globalLUTTextPosition(3), 0];
+    globalLUTMaxInputPosition = globalLUTMinInputPosition + [answerFieldEditWidth/2 + fourierLowerBoundTextPosition(3)/12, 0, 0, 0];
+    
+    uicontrol('Parent',f,...
+        'Style','text',...
+        'String',sprintf('Global color range (min max)?\n("auto" for auto-detect)'),...
+        'BackgroundColor',panelColor,...
+        'ForegroundColor',textFGColor,...
+        'Position',globalLUTTextPosition,...
+        'HorizontalAlignment','left',...
+        'FontName','Gill Sans',...
+        'FontSize',textSize);
+    uicontrol('Parent',f,...
+        'Style','edit',...
+        'String',analysisVariables{9},...
+        'ForegroundColor',textFGColor,...
+        'Position',globalLUTMinInputPosition,...
+        'Callback', {@globalLUTMin_Callback},...
+        'FontName','Gill Sans',...
+        'FontSize',textSize);
+    uicontrol('Parent',f,...
+        'Style','edit',...
+        'String',analysisVariables{10},...
+        'ForegroundColor',textFGColor,...
+        'Position',globalLUTMaxInputPosition,...
+        'Callback', {@globalLUTMax_Callback},...
+        'FontName','Gill Sans',...
+        'FontSize',textSize);
+    
+    % === TEMPORAL SMOOTHING ===
+    tempSmoothTextPosition = globalLUTTextPosition + [0, - 2*textIconHeight - panelBufferSpacing, 0, 0];
+    tempSmoothInputPosition = tempSmoothTextPosition + [tempSmoothTextPosition(3) + textBufferSpacing, 0, answerFieldEditWidth/2 - tempSmoothTextPosition(3), 0];
+    
+    uicontrol('Parent',f,...
+        'Style','text',...
+        'String',sprintf('Temporal smoothing (frames)?\n(0 = off, typical: 3-7)'),...
+        'BackgroundColor',panelColor,...
+        'ForegroundColor',textFGColor,...
+        'Position',tempSmoothTextPosition,...
+        'HorizontalAlignment','left',...
+        'FontName','Gill Sans',...
+        'FontSize',textSize);
+    uicontrol('Parent',f,...
+        'Style','edit',...
+        'String',analysisVariables{11},...
+        'ForegroundColor',textFGColor,...
+        'Position',tempSmoothInputPosition,...
+        'Callback', {@tempSmooth_Callback},...
+        'FontName','Gill Sans',...
+        'FontSize',textSize);
+    
     % Close button
     uicontrol('Parent',f,...
         'Style','pushbutton',...
@@ -1232,6 +1385,27 @@ function generateAnalysisPanelListing
         PIVVideoParams(ii,jj) = str2double(get(hObject,'String'));
     end
     
+    % Velocity component dropdown callback
+    function velComponent_Callback(hObject, ~)
+        items = get(hObject, 'String');
+        idx = get(hObject, 'Value');
+        analysisVariables{8} = items{idx};
+    end
+    
+    % Global LUT range callbacks
+    function globalLUTMin_Callback(hObject, ~)
+        analysisVariables{9} = get(hObject, 'String');
+    end
+    
+    function globalLUTMax_Callback(hObject, ~)
+        analysisVariables{10} = get(hObject, 'String');
+    end
+    
+    % Temporal smoothing callback
+    function tempSmooth_Callback(hObject, ~)
+        analysisVariables{11} = get(hObject, 'String');
+    end
+    
     % Close button callback
     function closeButton_Callback(~, ~)
         close all;
@@ -1250,20 +1424,34 @@ function generateAnalysisPanelListing
         % Close the program (it will open again with updated information)
         close all;
         
-        % Perform PIV
-        performPIV(mainExperimentDirectory, mainExperimentDirectoryContents, mainExperimentSubDirectoryContentsCell, mainAnalysisDirectory, analysisToPerform, analysisVariables, currentAnalysesPerformedFileName, rawPIVOutputName)
+        % Determine which velocity component to analyze
+        useLongitudinal = strcmp(analysisVariables{8}, 'Longitudinal');
+        if useLongitudinal
+            fprintf('\n=== ANALYSIS MODE: LONGITUDINAL ===\n\n');
+        else
+            fprintf('\n=== ANALYSIS MODE: TRANSVERSE ===\n\n');
+        end
         
-        % Obtain motility masks
+        % Obtain motility masks (same for both components)
         obtainMotilityMasks(mainExperimentDirectory, mainExperimentDirectoryContents, mainExperimentSubDirectoryContentsCell, mainAnalysisDirectory, analysisToPerform, analysisVariables, currentAnalysesPerformedFileName, maskFileOutputName)
         
-        % Perform interpolation
+        % Perform PIV (same for both components - raw vectors are component-agnostic)
+        performPIV(mainExperimentDirectory, mainExperimentDirectoryContents, mainExperimentSubDirectoryContentsCell, mainAnalysisDirectory, analysisToPerform, analysisVariables, currentAnalysesPerformedFileName, rawPIVOutputName)
+        
+        % Perform interpolation (same for both components)
         performMaskInterpolation(mainExperimentDirectory, mainExperimentDirectoryContents, mainExperimentSubDirectoryContentsCell, mainAnalysisDirectory, analysisToPerform, analysisVariables, currentAnalysesPerformedFileName, interpolationOutputName, rawPIVOutputName, maskFileOutputName)
         
-        % Analyze Data
+        % Analyze Data - dispatch based on selected component
         performMotilityDataAnalysis(mainExperimentDirectoryContents, mainExperimentSubDirectoryContentsCell, mainAnalysisDirectory, analysisToPerform, analysisVariables, currentAnalysesPerformedFileName, motilityParametersOutputName, interpolationOutputName, GUISize)
         
-        % Make PIV movie
+        % Make PIV movie - dispatch based on selected component
         createAllChosenPIVMovies(mainExperimentDirectory, mainExperimentDirectoryContents, mainExperimentSubDirectoryContentsCell, mainAnalysisDirectory, analysisToPerform, analysisVariables, currentAnalysesPerformedFileName, PIVOutputName, PIVVideoParams, interpolationOutputName);
+        
+        % Interactive wave tracing (if checked)
+        performWaveTracing(mainExperimentDirectoryContents, mainExperimentSubDirectoryContentsCell, mainAnalysisDirectory, analysisToPerform, analysisVariables, currentAnalysesPerformedFileName, interpolationOutputName);
+        
+        % Export QSTMap TIFFs (if checked)
+        performQSTMapTIFFExport(mainExperimentDirectoryContents, mainExperimentSubDirectoryContentsCell, mainAnalysisDirectory, analysisToPerform, analysisVariables, currentAnalysesPerformedFileName, interpolationOutputName);
         
         % Reopen this program
         analyzeMotility(mainExperimentDirectory, mainAnalysisDirectory);

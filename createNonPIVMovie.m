@@ -76,7 +76,7 @@ endingPosition = round(numCols*endX);
 
 % Initialize video data (CAREFUL: This can be huge if not done correctly)
 imStack = zeros(ceil(numRows/resReduce),ceil((endingPosition - startingPosition + 1)/resReduce), ceil((endingFrame - startingFrame + 1)/deltaF)); % You'd normally use the floor function rather than ceil, but this would lead to a classic "fencepost" error; we need to include the ends, not just the delta
-firstImHistExample = histeq(imread(fullfile(filenames{1}.name), 'Index', filenames{1}.index,'PixelRegion', {[1 resReduce numRows], [startingPosition resReduce endingPosition]})); % read images
+firstImHistExample = histeq(imreadSubsampled(fullfile(filenames{1}.name), [1 resReduce numRows], [startingPosition resReduce endingPosition], 'Index', filenames{1}.index)); % read images
 maxI = double(max(firstImHistExample(:)));
 minI = double(min(firstImHistExample(:)));
 
@@ -95,7 +95,7 @@ for i=startingFrame:deltaF:endingFrame
     waitbar(imageIndex/totalFrames, progbar, ...
         sprintf('Loading frame %d of %d', imageIndex, totalFrames));
     
-    curImage = imread(fullfile(filenames{i}.name), 'Index', filenames{i}.index,'PixelRegion', {[1 resReduce numRows], [startingPosition resReduce endingPosition]});
+    curImage = imreadSubsampled(fullfile(filenames{i}.name), [1 resReduce numRows], [startingPosition resReduce endingPosition], 'Index', filenames{i}.index);
     imStack(:,:,imageIndex) = (double(imhistmatch(curImage,firstImHistExample)) - minI)/(maxI - minI); % read images, histEQ them
 
 end

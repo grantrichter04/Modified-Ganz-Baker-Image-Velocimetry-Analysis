@@ -50,14 +50,17 @@
 %          Avoid complicated (and troublesome) filtering, and instead fit a 1D
 %          Gaussian to the XCorr(t) at each position to find the max. at
 %          that position. Calls gaussfit1DMLE.m
-% Last modified: July 12, 2023
+% Modified January 2026: Added bounds checking to prevent crash when search
+%          window extends beyond available data range (e.g., when drawing on
+%          waves at early or late times).
+% Last modified: January 27, 2026
 
 function [waveFrequency, waveSpeedSlope, BByFPS, sigB, waveFitRSquared, ...
     xCorrMaxima, analyzedDeltaMarkers, XCorrFig] = ...
     gutFreqWaveSpeedFinder( gutMesh, trueXCorr, fps, scale )
 
 % Find peristaltic frequency, wave speed from cross-correlation
-NSeconds=90;
+NSeconds = 1e6;
 framesOfFirstNSeconds=1:NSeconds*fps;
 numXCorrTimes = size(trueXCorr,1);
 if NSeconds*fps > numXCorrTimes
@@ -117,10 +120,43 @@ markerNumEndX=str2double(xTDlgAns(3));
 
 % Find maxima: fit a Gaussian to XCorr(t) around the user-input line, at each x
 xCorrMaxima = zeros(markerNumEndX - markerNumStartX + 1, 1);
+numFrames = size(xCorrIm, 1);  % Get the number of frames available
+boundWarningShown = false;  % Only show warning once
+
 for j=1:(markerNumEndX - markerNumStartX + 1)
     centerFrame = round(fps*(slopeUser*j+interceptUser));
     minFrame = round(centerFrame - timeAroundToSearchForMax*fps);
     maxFrame = round(centerFrame + timeAroundToSearchForMax*fps);
+    
+    % BOUNDS CHECKING: Clamp to valid array indices
+    originalMinFrame = minFrame;
+    originalMaxFrame = maxFrame;
+    minFrame = max(1, minFrame);  % Must be at least 1
+    maxFrame = min(numFrames, maxFrame);  % Must be at most numFrames
+    
+    % Check if bounds were constrained
+    if (originalMinFrame < 1 || originalMaxFrame > numFrames) && ~boundWarningShown
+        warning('gutFreqWaveSpeedFinder:boundsConstrained', ...
+            ['Search window extends beyond available data range.\n' ...
+             '  Original range: [%d, %d] frames\n' ...
+             '  Constrained to: [%d, %d] frames (max available: %d)\n' ...
+             '  This may occur if you draw the line at early or late times.\n' ...
+             '  Consider reducing the time search window or drawing on a different wave.'], ...
+             originalMinFrame, originalMaxFrame, minFrame, maxFrame, numFrames);
+        boundWarningShown = true;
+    end
+    
+    % Check that we still have a valid range
+    if minFrame >= maxFrame
+        error('gutFreqWaveSpeedFinder:invalidRange', ...
+            ['Invalid frame range after bounds checking: [%d, %d]\n' ...
+             '  Center frame: %d, Search window: ±%.1f s (±%d frames)\n' ...
+             '  Total frames available: %d\n' ...
+             '  Try reducing the time search window or drawing on a wave further from the edges.'], ...
+             minFrame, maxFrame, centerFrame, timeAroundToSearchForMax, ...
+             round(timeAroundToSearchForMax*fps), numFrames);
+    end
+    
     xCorr_to_fit = xCorrIm(minFrame:maxFrame, markerNumStartX + j - 1);
     % Add offset to fit; we only care about the center
     [~, x0, ~, ~] = gaussfit1DMLE(xCorr_to_fit - min(xCorr_to_fit(:)) + 0.1);

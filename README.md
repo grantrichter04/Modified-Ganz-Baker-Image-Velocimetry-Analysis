@@ -12,7 +12,6 @@ The functions make use of MATLAB's
 
 - Image Processing Toolbox
 - Signal Processing Toolbox
-- Optimization Toolbox
 
 There are three functions called from the Signal Processing toolbox (designfilt, filtfilt called by gutFreqWaveSpeedFinder.m and obtainMotilityParameters.m; xcorr.m called by obtainMotilityParameters.m). Again, if you don't have this, you can probably find something equivalent.
 

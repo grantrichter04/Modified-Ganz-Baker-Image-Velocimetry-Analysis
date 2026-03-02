@@ -14,7 +14,7 @@ currentAnalysisPerformed = currentAnalysisPerformedFile.currentAnalysisPerformed
 % disp('Warning: The function is not tested for accuracy since it was written on the fly. Consider writing your own');
 index = 0;
 
-%% Loop through all checked directories to generate PIV video
+%% Loop through all checked directories to collect motility parameters
 for i=1:nSubDirectories
     
     % Obtain the current directory size
@@ -28,7 +28,7 @@ for i=1:nSubDirectories
     % Loop through all checked subdirectories to perform PIV
     for j=1:nSFD
         
-        if(currentAnalysisPerformed(i).bools(j,6))
+        if(currentAnalysisPerformed(i).bools(j,8))
             
             index = index + 1;
             currentAnalysisPerformed(i).directory
@@ -64,6 +64,91 @@ end
 
 temp_table = struct2table(fishParams);
 writetable(temp_table,strcat(mainAnalysisDirectory, filesep, 'fishParams.csv'))
+
+%% Collect individual wave metrics from all datasets
+allWaveMetrics = table();
+for i=1:nSubDirectories
+    subDire=dir(strcat(mainAnalysisDirectory,filesep,mainAnalysisDirectoryContents(i).name));
+    subDire(strncmp({subDire.name}, '.', 1)) = [];
+    subDire([subDire.isdir]==0) = [];
+    nSFD=size({subDire.name},2);
+    curFolder = mainAnalysisDirectoryContents(i).name;
+    for j=1:nSFD
+        if(currentAnalysisPerformed(i).bools(j,8))
+            curAnDir = strcat(mainAnalysisDirectory, filesep, mainAnalysisDirectoryContents(i).name, filesep, mainAnalysisSubDirectoryContentsCell{1, i}(j).name);
+            waveFile = fullfile(curAnDir, 'WaveMetrics.csv');
+            if exist(waveFile, 'file')
+                try
+                    waveTable = readtable(waveFile);
+                    nWaves = height(waveTable);
+                    waveTable.Folder = repmat({curFolder}, nWaves, 1);
+                    waveTable.SubFolder = repmat({mainAnalysisSubDirectoryContentsCell{1, i}(j).name}, nWaves, 1);
+                    waveTable = movevars(waveTable, {'Folder', 'SubFolder'}, 'Before', 1);
+                    allWaveMetrics = [allWaveMetrics; waveTable]; %#ok
+                    fprintf('  Collected %d wave events from %s/%s\n', nWaves, curFolder, mainAnalysisSubDirectoryContentsCell{1, i}(j).name);
+                catch ME
+                    fprintf('  Warning: Could not read wave metrics from %s/%s: %s\n', curFolder, mainAnalysisSubDirectoryContentsCell{1, i}(j).name, ME.message);
+                end
+            end
+        end
+    end
+end
+
+if height(allWaveMetrics) > 0
+    writetable(allWaveMetrics, strcat(mainAnalysisDirectory, filesep, 'allWaveMetrics.csv'));
+    fprintf('Collected %d total wave events into allWaveMetrics.csv\n', height(allWaveMetrics));
+else
+    fprintf('No wave metrics files found to collect.\n');
+end
+
+%% Collect all QSTMap TIFFs (Transverse + Longitudinal) into a single subfolder
+tiffCollectDir = fullfile(mainAnalysisDirectory, 'QSTMap_TIFFs_Collected');
+tiffCount = 0;
+
+for i=1:nSubDirectories
+    subDire=dir(strcat(mainAnalysisDirectory,filesep,mainAnalysisDirectoryContents(i).name));
+    subDire(strncmp({subDire.name}, '.', 1)) = [];
+    subDire([subDire.isdir]==0) = [];
+    nSFD=size({subDire.name},2);
+    curFolder = mainAnalysisDirectoryContents(i).name;
+    for j=1:nSFD
+        if(currentAnalysisPerformed(i).bools(j,8))
+            curAnDir = strcat(mainAnalysisDirectory, filesep, mainAnalysisDirectoryContents(i).name, filesep, mainAnalysisSubDirectoryContentsCell{1, i}(j).name);
+            
+            % Find QSTMap TIFF files in this directory (both Transverse and Longitudinal)
+            tiffFiles = dir(fullfile(curAnDir, 'QSTMap_*_32bit_*.tif'));
+            
+            for k = 1:numel(tiffFiles)
+                % Create collection folder on first hit
+                if tiffCount == 0
+                    if ~exist(tiffCollectDir, 'dir')
+                        mkdir(tiffCollectDir);
+                    end
+                end
+                
+                srcPath = fullfile(curAnDir, tiffFiles(k).name);
+                dstPath = fullfile(tiffCollectDir, tiffFiles(k).name);
+                copyfile(srcPath, dstPath);
+                tiffCount = tiffCount + 1;
+            end
+            
+            % Also copy the combined README if it exists
+            readmeFiles = dir(fullfile(curAnDir, 'QSTMap_README_*.txt'));
+            for k = 1:numel(readmeFiles)
+                if tiffCount > 0 || exist(tiffCollectDir, 'dir')
+                    copyfile(fullfile(curAnDir, readmeFiles(k).name), ...
+                             fullfile(tiffCollectDir, readmeFiles(k).name));
+                end
+            end
+        end
+    end
+end
+
+if tiffCount > 0
+    fprintf('Collected %d QSTMap TIFF(s) into: %s\n', tiffCount, tiffCollectDir);
+else
+    fprintf('No QSTMap TIFFs found to collect.\n');
+end
 
 end
 

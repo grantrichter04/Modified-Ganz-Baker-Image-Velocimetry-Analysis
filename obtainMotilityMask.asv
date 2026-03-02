@@ -38,7 +38,7 @@ ims = dir(strcat(imPath, filesep, filetype));
 info = imfinfo(strcat(imPath, filesep, ims(1).name));
 nNumCols = info(1).Height;
 nNumRows = info(1).Width;
-im = imreadSubsampled(strcat(imPath, filesep, ims(1).name), [1 resReduce nNumCols], [1 resReduce nNumRows]);
+im = imread(strcat(imPath, filesep, ims(1).name), 'PixelRegion', {[1 resReduce nNumCols], [1 resReduce nNumRows]});
 
 % Calculate PIV window size in display pixels
 pivWindowPixels = templateSize;  % After resolution reduction applied during PIV
@@ -79,7 +79,7 @@ while (continueBool ~= 1)
         end
         
         % Add info text
-        text(10, 20, sprintf('PIV Grid: %dÃ—%d px windows, 50%% overlap', ...
+        text(10, 20, sprintf('PIV Grid: %d×%d px windows, 50%% overlap', ...
             templateSize, templateSize), ...
             'Color', gridColor, 'FontSize', 10, 'FontWeight', 'bold', ...
             'BackgroundColor', [0 0 0 0.5]);

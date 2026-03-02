@@ -53,7 +53,7 @@ for i=1:nDirectories
     for j=1:nSubDirectories
         
         % If we want to analyze it, do so, else skip
-        if(analysisToPerform(i).bools(j,3) && analysisToPerform(i).bools(j,6))
+        if(analysisToPerform(i).bools(j,3) && analysisToPerform(i).bools(j,8))
             
             % ObtainCurrentDirectory
             curDir = strcat(mainAnalysisDirectory, filesep, mainExperimentDirectoryContents(i).name, filesep, mainExperimentSubDirectoryContentsCell{1, i}(j).name);
@@ -61,6 +61,40 @@ for i=1:nDirectories
             
             % Perform mask creation
             [gutMesh, mSlopes, gutMeshVels, gutMeshVelsPCoords, thetas] = interpolatePIVVectorsInMask(curDir, expDir, analysisVariables{1}, str2double(analysisVariables{5}), rawPIVOutputName, maskFileOutputName); %#ok since it is saved WARNING: Don't change these variable names
+            
+            % Apply temporal smoothing to velocity fields if requested
+            % This reduces frame-to-frame noise while preserving the slow
+            % peristaltic wave signal. The smoothing kernel is Gaussian with
+            % FWHM = temporalSmoothingFrames. At typical peristaltic frequencies
+            % (~1-3/min) and frame rates (~5 fps), a 5-frame kernel attenuates
+            % the biological signal by < 0.3%.
+            temporalSmoothingFrames = 0;  % default: off
+            if size(analysisVariables, 2) >= 11
+                temporalSmoothingFrames = str2double(analysisVariables{11});
+                if isnan(temporalSmoothingFrames)
+                    temporalSmoothingFrames = 0;
+                end
+            end
+            
+            if temporalSmoothingFrames > 0
+                sigma = temporalSmoothingFrames / 2.355;  % Convert FWHM to Gaussian sigma
+                halfWidth = ceil(3 * sigma);
+                kernelT = exp(-(-halfWidth:halfWidth).^2 / (2 * sigma^2));
+                kernelT = kernelT / sum(kernelT);
+                
+                [nR, nC, nComp, nT] = size(gutMeshVelsPCoords);
+                fprintf('  Applying temporal smoothing: %d-frame Gaussian (sigma=%.1f frames) to %dx%dx%d grid over %d frames...\n', ...
+                    temporalSmoothingFrames, sigma, nR, nC, nComp, nT);
+                for ri = 1:nR
+                    for ci = 1:nC
+                        for comp = 1:nComp
+                            timeSeries = squeeze(gutMeshVelsPCoords(ri, ci, comp, :));
+                            gutMeshVelsPCoords(ri, ci, comp, :) = conv(timeSeries, kernelT, 'same');
+                        end
+                    end
+                end
+                fprintf('  Temporal smoothing complete.\n');
+            end
             
             % Save <interpolationOutputName>_Current.mat, <interpolationOutputName>_<date>.mat
             save(strcat(mainAnalysisDirectory, filesep, mainExperimentDirectoryContents(i).name, filesep, mainExperimentSubDirectoryContentsCell{1, i}(j).name, filesep, interpolationOutputName, '_Current'), 'gutMesh','mSlopes','gutMeshVels','gutMeshVelsPCoords','thetas');

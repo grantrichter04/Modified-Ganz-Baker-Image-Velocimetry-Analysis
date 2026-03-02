@@ -18,8 +18,38 @@
 %    2018 version. Change: Additional inputs for preproc; see s{12-16}
 %    Also sped up by avoiding redundant calculations for "image 1"
 % Last modified Sept. 1, 2023: Raghuveer Parthasarathy
+% Modified Feb. 2026: Added PIVlab 3.00+ compatibility (namespace packages).
+%   Functions PIVlab_preproc and piv_FFTmulti moved to preproc.PIVlab_preproc
+%   and piv.piv_FFTmulti in PIVlab 3.00+. Runtime detection supports both.
 
 function [p, s, x, y, u, v, typevector, imageDirectory, filenames, u_filt, v_filt, typevector_filt] = obtainRawPIVOutput(imageDirectory, settings)
+
+%% Detect PIVlab version and set function handles
+% PIVlab 3.00+ moved functions into namespace packages (+preproc, +piv).
+% Detect which version is installed and create compatible function handles.
+if exist('preproc.PIVlab_preproc', 'file') || exist('+preproc/PIVlab_preproc.m', 'file')
+    % PIVlab 3.00+ (namespace version)
+    pivlab_preproc_fn = @preproc.PIVlab_preproc;
+    fprintf('  PIVlab version: 3.00+ (namespace packages detected)\n');
+elseif exist('PIVlab_preproc', 'file')
+    % PIVlab 2.x (legacy flat version)
+    pivlab_preproc_fn = @PIVlab_preproc;
+    fprintf('  PIVlab version: 2.x (legacy functions detected)\n');
+else
+    error(['PIVlab preprocessing function not found. ' ...
+           'Please ensure PIVlab is installed and on the MATLAB path.\n' ...
+           'Install via Add-On Explorer or download from: ' ...
+           'https://github.com/Shrediquette/PIVlab']);
+end
+
+if exist('piv.piv_FFTmulti', 'file') || exist('+piv/piv_FFTmulti.m', 'file')
+    piv_fftmulti_fn = @piv.piv_FFTmulti;
+elseif exist('piv_FFTmulti', 'file')
+    piv_fftmulti_fn = @piv_FFTmulti;
+else
+    error(['PIVlab correlation function (piv_FFTmulti) not found. ' ...
+           'Please ensure PIVlab is installed and on the MATLAB path.']);
+end
 
 %% Create list of images inside specified directory
 suffix = settings{1};
@@ -121,28 +151,28 @@ for i=1:nF - 1
     counter=counter+1;
     if(strcmp(suffix, '*.tif'))
         if i==1
-            image1=imread(fullfile(filenames{i}.name), 'Index', filenames{i}.index,'PixelRegion', {[1 resReduce numCols], [1 resReduce numRows]}); % read images
-            image1_preproc = PIVlab_preproc (image1,p{1,2},p{2,2},p{3,2},p{4,2},p{5,2},p{6,2},p{7,2},p{8,2}, 0, 1); %preprocess images
+            image1=imreadSubsampled(fullfile(filenames{i}.name), [1 resReduce numCols], [1 resReduce numRows], 'Index', filenames{i}.index); % read images
+            image1_preproc = pivlab_preproc_fn(image1,p{1,2},p{2,2},p{3,2},p{4,2},p{5,2},p{6,2},p{7,2},p{8,2}, 0, 1); %preprocess images
         else
             image1_preproc = image2_preproc;
         end
-        image2=imread(fullfile(filenames{i+1}.name), 'Index', filenames{i + 1}.index,'PixelRegion', {[1 resReduce numCols], [1 resReduce numRows]}); % read images
+        image2=imreadSubsampled(fullfile(filenames{i+1}.name), [1 resReduce numCols], [1 resReduce numRows], 'Index', filenames{i + 1}.index); % read images
     else
         if i==1
-            image1=imread(fullfile(filenames{i}.name), 'PixelRegion', {[1 resReduce numCols], [1 resReduce numRows]}); % read images
-            image1_preproc = PIVlab_preproc (image1,p{1,2},p{2,2},p{3,2},p{4,2},p{5,2},p{6,2},p{7,2},p{8,2}, 0, 1); %preprocess images
+            image1=imreadSubsampled(fullfile(filenames{i}.name), [1 resReduce numCols], [1 resReduce numRows]); % read images
+            image1_preproc = pivlab_preproc_fn(image1,p{1,2},p{2,2},p{3,2},p{4,2},p{5,2},p{6,2},p{7,2},p{8,2}, 0, 1); %preprocess images
         else
             image1_preproc = image2_preproc;
         end
-        image2=imread(fullfile(filenames{i+1}.name), 'PixelRegion', {[1 resReduce numCols], [1 resReduce numRows]}); % read images
+        image2=imreadSubsampled(fullfile(filenames{i+1}.name), [1 resReduce numCols], [1 resReduce numRows]); % read images
     end
     % 2018 version:
     %image1 = PIVlab_preproc (image1,p{1,2},p{2,2},p{3,2},p{4,2},p{5,2},p{6,2},p{7,2},p{8,2}); %preprocess images
     %image2 = PIVlab_preproc (image2,p{1,2},p{2,2},p{3,2},p{4,2},p{5,2},p{6,2},p{7,2},p{8,2});
-    image2_preproc = PIVlab_preproc (image2,p{1,2},p{2,2},p{3,2},p{4,2},p{5,2},p{6,2},p{7,2},p{8,2}, 0, 1);
+    image2_preproc = pivlab_preproc_fn(image2,p{1,2},p{2,2},p{3,2},p{4,2},p{5,2},p{6,2},p{7,2},p{8,2}, 0, 1);
     % 2018 version:
     %[x{counter}, y{counter}, u{counter}, v{counter}, typevector{counter}] = piv_FFTmulti (image1,image2,s{1,2},s{2,2},s{3,2},s{4,2},s{5,2},s{6,2},s{7,2},s{8,2},s{9,2},s{10,2});
-    [x{counter}, y{counter}, u{counter}, v{counter}, typevector{counter}] = piv_FFTmulti (image1_preproc,image2_preproc,s{1,2},s{2,2},s{3,2},s{4,2},s{5,2},s{6,2},s{7,2},s{8,2},s{9,2},s{10,2}, s{11,2}, s{12,2}, s{13,2}, s{14,2}, s{15,2}, s{16,2});
+    [x{counter}, y{counter}, u{counter}, v{counter}, typevector{counter}] = piv_fftmulti_fn(image1_preproc,image2_preproc,s{1,2},s{2,2},s{3,2},s{4,2},s{5,2},s{6,2},s{7,2},s{8,2},s{9,2},s{10,2}, s{11,2}, s{12,2}, s{13,2}, s{14,2}, s{15,2}, s{16,2});
     if mod(i,10)==0
         waitbar(i/nF, progbar, progtitle)
     end    

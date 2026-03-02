@@ -1,15 +1,14 @@
 % Function which takes the PIV vectors and processes them to obtain scalar
 % representations of motility features, such as amplitude, frequency, etc.
 % It does this by projecting the 4D gutMeshVelsPCoords down onto a 2D
-% surface (representing only the TRANSVERSE component of the velocity,
-% using the difference between top and bottom halves to capture contraction),
-% performs a cross-correlation to obtain wave speed, frequency, and duration, 
-% then performs a fourier transform on the surface to get a frequency 
-% spectrum to obtain the amplitude.
+% surface (representing only the LONGITUDINAL component of the velocity and
+% averaging over the many rows), performs a cross-correlation to obtain
+% wave speed, frequency, and duration, then performs a fourier transform on
+% the surface to get a frequency spectrum to obtain the amplitude.
 %
-% THIS VERSION: TRANSVERSE ANALYSIS
-% XCorr and FFT are computed from transverse (DV) velocities and 
-% displayed next to the QSTMapTransverse plot.
+% THIS VERSION: LONGITUDINAL ANALYSIS
+% XCorr and FFT are computed from longitudinal (AP) velocities and 
+% displayed next to the QSTMapLongitudinal plot.
 %
 % Inputs:- curDir: The directory to obtain the processed PIV data from.
 %        - analysisVariables: A cell array of numbers and strings
@@ -52,7 +51,7 @@
 %
 % Last modified Dec. 17, 2023 by Raghuveer Parthasarathy. Multiply
 %    convertAmplitudeToUmUnits by fps so units are um/second
-% Modified for explicit TRANSVERSE analysis version
+% Modified for explicit LONGITUDINAL analysis version
 % Added percentile-based scaling option to handle outlier spikes
 
 function [fftPowerPeak, fftPeakFreq, fftRPowerPeakSTD, fftRPowerPeakMin, ...
@@ -106,7 +105,7 @@ velocityScale = scale * fps;  % pixels/frame -> um/s conversion factor
 
 %% Initialize main figure
 h = figure('Visible', 'off', 'Position', GUISize, 'Resize', 'off'); % Create figure
-set(h, 'name', 'Motility Analysis GUI - TRANSVERSE', 'numbertitle', 'off'); % Rename figure
+set(h, 'name', 'Motility Analysis GUI - LONGITUDINAL', 'numbertitle', 'off'); % Rename figure
 a = axes; % Define figure axes
 set(a, 'Position', [0, 0, 1, 1]); % Stretch the axes over the whole figure
 set(a, 'Xlim', [0, widthGUI], 'YLim', [0, heightGUI]); % Switch off autoscaling
@@ -123,7 +122,7 @@ abscissaValues=(markerNumStart-1)*translateMarkerNumToMicron:(markerNumEnd-1)*tr
 ordinateValues= int16((size(gutMeshVelsPCoords,4)/fractionOfTimeStart):(size(gutMeshVelsPCoords,4)/(fractionOfTimeStart)+size(gutMeshVelsPCoords,4)/totalTimeFraction-1));
 surfaceValuesL=squeeze(-mean(gutMeshVelsPCoords(:,markerNumStart:markerNumEnd,1,ordinateValues),1)) * velocityScale;
 
-% Transverse QSTMap values (using top/bottom difference to capture contraction)
+% Transverse QSTMap values
 surfaceValuesT=2*squeeze(mean(gutMeshVelsPCoords(end/2:end,markerNumStart:markerNumEnd,2,ordinateValues),1) - mean(gutMeshVelsPCoords(1:end/2,markerNumStart:markerNumEnd,2,ordinateValues),1)) * velocityScale;
 
 %% Determine QSTMap scaling
@@ -160,7 +159,7 @@ colormap('Jet');
 axis fill;
 axis on;
 h=gcf;
-title('QSTMapLongitudinal','FontSize',20,'FontWeight','bold');
+title('QSTMapLongitudinal (ANALYZED)','FontSize',20,'FontWeight','bold');
 ylabel('Time (s)','FontSize',20);
 xlabel('x (\mum)','FontSize',20);
 colorbar;
@@ -176,16 +175,16 @@ colormap('Jet');
 axis fill;
 axis on;
 h=gcf;
-title('QSTMapTransverse (ANALYZED)','FontSize',20,'FontWeight','bold');
+title('QSTMapTransverse','FontSize',20,'FontWeight','bold');
 ylabel('Time (s)','FontSize',20);
 xlabel('x (\mum)','FontSize',20);
 colorbar;
 set(findall(h,'type','axes'),'fontsize',15,'fontWeight','bold');
 
-%% Cross Correlations of wave propagations - TRANSVERSE
+%% Cross Correlations of wave propagations - LONGITUDINAL
 ordinateValues=int16(size(gutMeshVelsPCoords,4)/fractionOfTimeStart:(size(gutMeshVelsPCoords,4)/(fractionOfTimeStart)+size(gutMeshVelsPCoords,4)/totalTimeFraction-1));
-% Using TRANSVERSE component (index 2) with top/bottom difference to capture contraction
-surfaceValues=2*squeeze(mean(gutMeshVelsPCoords(end/2:end,markerNumStart:markerNumEnd,2,ordinateValues),1) - mean(gutMeshVelsPCoords(1:end/2,markerNumStart:markerNumEnd,2,ordinateValues),1)) * velocityScale;
+% Using LONGITUDINAL component (index 1)
+surfaceValues=squeeze(-mean(gutMeshVelsPCoords(:,markerNumStart:markerNumEnd,1,ordinateValues),1)) * velocityScale;
 nCorrs=size(surfaceValues,1)-1;
 dummyR=xcorr(surfaceValues(1,:),surfaceValues(2,:),'unbiased'); % Easiest way of finding the dimensions to use... dummy because I'm lazy
 endRByTwo=floor(length(dummyR)/2);
@@ -208,8 +207,8 @@ else
     xCorrScale = [];
 end
 
-% Display surface plot - BOTTOM MIDDLE (position 5) - next to transverse QSTMap
-subplot(2, 3, 5);
+% Display surface plot - TOP MIDDLE (position 2) - next to longitudinal QSTMap
+subplot(2, 3, 2);
 abscissaValues=[translateMarkerNumToMicron,(nCorrs-1)*translateMarkerNumToMicron];
 ordinateValues=[0, (size(r,2)/2-1)/fps];
 imshow(trueXCorr,xCorrScale, 'InitialMagnification', 'fit','XData', abscissaValues, 'YData', ordinateValues);
@@ -218,20 +217,20 @@ colormap('Jet');
 axis fill;
 axis on;
 h=gcf;
-title('XCorr (Transverse)','FontSize',20,'FontWeight','bold');
+title('XCorr (Longitudinal)','FontSize',20,'FontWeight','bold');
 ylabel('\tau (s)','FontSize',20);
 xlabel('\Delta x (\mum)','FontSize',20);
 %zlabel('Correlation','FontSize',20);
 colorbar;
 set(findall(h,'type','axes'),'fontsize',15,'fontWeight','bold');
 
-%% Find wave pulse width from autocorrelation decay - TRANSVERSE
+%% Find wave pulse width from autocorrelation decay - LONGITUDINAL
 
 % Autocorrelations
 tauSubdiv=1;
 ordinateValues=int16(size(gutMeshVelsPCoords,4)/fractionOfTimeStart:(size(gutMeshVelsPCoords,4)/(fractionOfTimeStart)+size(gutMeshVelsPCoords,4)/totalTimeFraction-1));
-% Using TRANSVERSE component (index 2) with top/bottom difference
-surfaceValues=2*squeeze(mean(gutMeshVelsPCoords(end/2:end,markerNumStart:markerNumEnd,2,ordinateValues),1) - mean(gutMeshVelsPCoords(1:end/2,markerNumStart:markerNumEnd,2,ordinateValues),1)) * velocityScale;
+% Using LONGITUDINAL component (index 1)
+surfaceValues=squeeze(-mean(gutMeshVelsPCoords(:,markerNumStart:markerNumEnd,1,ordinateValues),1)) * velocityScale;
 arr=xcorr(surfaceValues(1,:),'unbiased');
 endRByTwo=floor(length(arr)/2);
 arr=arr(endRByTwo+1:end);
@@ -263,10 +262,10 @@ waveAverageWidth=2*mean(decayTimes)/fps; % The factor of 2 for the whole wave. I
 goodData=0;
 %imcontrast( h );
 
-%% Perform a FFT on the QSTMap - TRANSVERSE
+%% Perform a FFT on the QSTMap - LONGITUDINAL
 % Find wave amplitude from FFT peaks
-% Using TRANSVERSE component (index 2) with top/bottom difference
-gutMeshVals=2*squeeze(mean(gutMeshVelsPCoords(end/2:end,:,2,:),1) - mean(gutMeshVelsPCoords(1:end/2,:,2,:),1)) * velocityScale; % Transverse component with contraction formula, in um/s
+% Using LONGITUDINAL component (index 1)
+gutMeshVals=squeeze(mean(gutMeshVelsPCoords(:,:,1,:),1)) * velocityScale; % Average longitudinal component down the gut, in um/s
 NFFT = 2^nextpow2(size(gutMeshVals,2));
 fftGMV=zeros(size(gutMeshVals,1),NFFT);
 for i=1:size(gutMeshVals,1)
@@ -290,39 +289,39 @@ subsetF = [f(subsetFFTBeginningF), f(subsetFFTEndingF)];
 subsetFullFFT = fftRootPowerGMV(:,subsetFFTBeginningF:subsetFFTEndingF);
 plusMinusAroundMeanFFTFreq = round(2*(NFFT/2 + 1)*plusMinusAroundMeanFFTFreqPM/(60*fps)); % Translates the search from plus or minus per minutes to plus or minus index numbers
 
-% Plot the fft - BOTTOM RIGHT (position 6) - next to transverse QSTMap
+% Plot the fft - TOP RIGHT (position 3) - next to longitudinal QSTMap
 translateMarkerNumToMicron=scale*round(mean(diff(squeeze(gutMesh(1,:,1,1))))); % Should be units of microns/marker
-subplot(2, 3, 6);
+subplot(2, 3, 3);
 imshow(subsetFullFFT',[], 'InitialMagnification', 'fit','XData', [1, size(subsetFullFFT,1)*translateMarkerNumToMicron], 'YData', subsetF*60);
 set(gca,'YDir','normal')
 colormap('Jet');
 axis square;
 axis on;
 h=gcf;
-title('FFT (Transverse)','FontSize',20,'FontWeight','bold');
+title('FFT (Longitudinal)','FontSize',20,'FontWeight','bold');
 ylabel('Frequency (min^{-1})','FontSize',20);
 xlabel('X (\mum)','FontSize',20);
 % zlabel('Correlation','FontSize',20);
 
-%% Longitudinal Motion as a surface (separate figure for saving)
+%% Transverse Motion as a surface (separate figure for saving)
 
-% Define variables as a fraction of the longitudinal components of gutMeshVelsPCoords
+% Define variables as a fraction of the transverse components of gutMeshVelsPCoords
 abscissaValues=(markerNumStart-1)*translateMarkerNumToMicron:(markerNumEnd-1)*translateMarkerNumToMicron;
 ordinateValues= int16((size(gutMeshVelsPCoords,4)/fractionOfTimeStart):(size(gutMeshVelsPCoords,4)/(fractionOfTimeStart)+size(gutMeshVelsPCoords,4)/totalTimeFraction-1));
-surfaceValuesL=squeeze(-mean(gutMeshVelsPCoords(:,markerNumStart:markerNumEnd,1,ordinateValues),1)) * velocityScale;
+surfaceValuesT=squeeze(-mean(gutMeshVelsPCoords(:,markerNumStart:markerNumEnd,2,ordinateValues),1)) * velocityScale;
 
 % Display surface plot
-longH = figure;
-imshow(surfaceValuesL',QSTMapScaleL, 'InitialMagnification', 'fit','XData', [abscissaValues(1), abscissaValues(end)], 'YData', 1/fps*ordinateValues);
+transH = figure;
+imshow(surfaceValuesT',QSTMapScaleT, 'InitialMagnification', 'fit','XData', [abscissaValues(1), abscissaValues(end)], 'YData', 1/fps*ordinateValues);
 set(gca,'YDir','normal')
 colormap('Jet');
 axis fill;
 axis on;
-title('QSTMapLongitudinal','FontSize',20,'FontWeight','bold');
+title('QSTMapTransverse','FontSize',20,'FontWeight','bold');
 ylabel('Time (s)','FontSize',20);
 xlabel('x (\mum)','FontSize',20);
-set(findall(longH,'type','axes'),'fontsize',15,'fontWeight','bold');
-saveas(longH, strcat(curDir, filesep, 'LongFig_',date), 'png');
+set(findall(transH,'type','axes'),'fontsize',15,'fontWeight','bold');
+saveas(transH, strcat(curDir, filesep, 'TransFig_',date), 'png');
 
 %% Transverse velocities
 
@@ -353,7 +352,7 @@ while(retryBool)
     fftRPowerPeakMin=min(fftRootPowerGMV(:,actualMaxPosition));
     fftRPowerPeakMax=max(fftRootPowerGMV(:,actualMaxPosition));
     
-    fitInfo = sprintf('\nTRANSVERSE ANALYSIS\nWave Period (s) = %.2f \nWave Period  from FFT (s) = %.2f \nSlope (s/marker) = %.2f \n Wave Fit R-Squared = %.4f \n Wave Speed Variation = %.2f \n FFT Peak Amplitude (um/sec) = %.2f',...
+    fitInfo = sprintf('\nLONGITUDINAL ANALYSIS\nWave Period (s) = %.2f \nWave Period  from FFT (s) = %.2f \nSlope (s/marker) = %.2f \n Wave Fit R-Squared = %.4f \n Wave Speed Variation = %.2f \n FFT Peak Amplitude (um/sec) = %.2f',...
         60/waveFrequency, 1/fftPeakFreq, BByFPS, waveFitRSquared, sigB, convertAmplitudeToUmUnits*fftPowerPeak);
     retryPrompt = menu(strcat('Does everything look good (figures will be saved after this)?',fitInfo),'Yes','No');
     if(retryPrompt==1)
@@ -402,11 +401,11 @@ fftRPowerPeakMax = fftRPowerPeakMax*convertAmplitudeToUmUnits;
 % Save the figure as both a png (with date) and as a .fig (only most recent
 % since the file sizes may be large)
 set(findall(h,'type','axes'),'fontsize',15,'fontWeight','bold');
-saveas(h, strcat(curDir, filesep, 'Figures_Transverse_', date), 'png')
+saveas(h, strcat(curDir, filesep, 'Figures_Longitudinal_', date), 'png')
 saveas(h, strcat(curDir, filesep, 'Figures_Current'), 'fig');
 
 close(h);
-close(longH);
+close(transH);
 close(g);
 
 end

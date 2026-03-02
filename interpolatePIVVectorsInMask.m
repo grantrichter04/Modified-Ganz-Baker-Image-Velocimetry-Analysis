@@ -54,8 +54,34 @@ splineNFineness=10000;
 
 %% Initialize mesh variables
 % Load data
-load(strcat(curDir, filesep, rawPIVOutputName,'_Current.mat'));
-load(strcat(curDir, filesep, maskFileOutputName, '_Current.mat'));
+pivFile = strcat(curDir, filesep, rawPIVOutputName,'_Current.mat');
+maskFile = strcat(curDir, filesep, maskFileOutputName, '_Current.mat');
+fprintf('\n=== INTERPOLATION DIAGNOSTICS ===\n');
+fprintf('Loading PIV data from: %s\n', pivFile);
+fprintf('Loading mask data from: %s\n', maskFile);
+
+pivInfo = dir(pivFile);
+maskInfo = dir(maskFile);
+fprintf('PIV file size: %.1f KB, last modified: %s\n', pivInfo.bytes/1024, pivInfo.date);
+fprintf('Mask file size: %.1f KB, last modified: %s\n', maskInfo.bytes/1024, maskInfo.date);
+
+load(pivFile);
+load(maskFile);
+
+% Diagnostic: Check what was loaded
+fprintf('PIV x cell array size: %s\n', mat2str(size(x)));
+fprintf('PIV x{1} size: %s\n', mat2str(size(x{1})));
+if ~isempty(x{1})
+    fprintf('PIV x{1} range: [%.2f, %.2f]\n', min(x{1}(:)), max(x{1}(:)));
+    fprintf('PIV y{1} range: [%.2f, %.2f]\n', min(y{1}(:)), max(y{1}(:)));
+else
+    fprintf('WARNING: x{1} is EMPTY - PIV may not have run correctly!\n');
+end
+fprintf('Mask gutOutlinePoly size: %s\n', mat2str(size(gutOutlinePoly)));
+fprintf('Mask X range: [%.2f, %.2f], Y range: [%.2f, %.2f]\n', ...
+    min(gutOutlinePoly(:,1)), max(gutOutlinePoly(:,1)), ...
+    min(gutOutlinePoly(:,2)), max(gutOutlinePoly(:,2)));
+
 ex=x{1}; %#ok as it should be loaded, represents the x positions of the gutMesh
 why=y{1}; %#ok as it should be loaded, represents the y positions of the gutMesh
 
@@ -68,8 +94,42 @@ NV=2*ceil(mean(NVDist)/2);
 NUDist=sum(logicPsIn,1);
 NUDist(NUDist>0)=1;
 NU=sum(NUDist); % "Raw" NU, but I want it nicer
+
+% Diagnostic: Print computed values before potential crash
+fprintf('Points inside mask: %d of %d (%.1f%%)\n', sum(psIn), numel(psIn), 100*sum(psIn)/max(numel(psIn),1));
+fprintf('NVDist (points per column inside mask): mean=%.2f, range=[%d, %d]\n', mean(NVDist), min(NVDist), max(NVDist));
+fprintf('Raw NV=%d, Raw NU=%d\n', NV, NU);
+
 NUrem=idivide(uint8(NU),10);
 NU=double((NUrem+1)*10); % Just because I want an even, divisible by 10, NV
+
+fprintf('Final NV=%d, Final NU=%d\n', NV, NU);
+
+% Validate before proceeding
+if isnan(NV) || isnan(NU) || NV <= 0 || NU <= 0
+    fprintf('\n*** ERROR DIAGNOSIS ***\n');
+    if isempty(ex)
+        fprintf('CAUSE: PIV grid positions (x{1}) are empty.\n');
+        fprintf('  This means the PIV analysis produced no data.\n');
+        fprintf('  Check that the PIV step ran successfully and that\n');
+        fprintf('  images were read correctly.\n');
+    elseif sum(psIn) == 0
+        fprintf('CAUSE: No PIV grid points fall inside the mask polygon.\n');
+        fprintf('  PIV grid covers X=[%.1f,%.1f], Y=[%.1f,%.1f]\n', ...
+            min(ex(:)), max(ex(:)), min(why(:)), max(why(:)));
+        fprintf('  Mask polygon covers X=[%.1f,%.1f], Y=[%.1f,%.1f]\n', ...
+            min(gutOutlinePoly(:,1)), max(gutOutlinePoly(:,1)), ...
+            min(gutOutlinePoly(:,2)), max(gutOutlinePoly(:,2)));
+        fprintf('  These ranges may not overlap (coordinate space mismatch).\n');
+    else
+        fprintf('CAUSE: Unknown - NV or NU computed as NaN/zero despite data being present.\n');
+    end
+    fprintf('=================================\n\n');
+    error('interpolatePIVVectorsInMask:invalidMeshSize', ...
+        'Cannot create mesh: NV=%g, NU=%g. See diagnostic output above.', NV, NU);
+end
+fprintf('=================================\n\n');
+
 % Initialize the gutMesh variables (the variables containing spatial info)
 finalExesTop=zeros(1,NU+1);
 finalExesBottom=zeros(1,NU+1);
